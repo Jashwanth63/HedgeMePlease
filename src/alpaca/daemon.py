@@ -58,6 +58,23 @@ async def main_async(dry_run: bool = False) -> None:
     scheduler.start()
     db.memo("daemon_start", {"dry_run": dry_run, "cycle_minutes": CYCLE_MINUTES})
 
+    # a restart may have interrupted an order ladder mid-flight, leaving a
+    # resting order nobody tracks; sweep strays before the first cycle
+    try:
+        async with AlpacaMCP() as broker:
+            strays = await broker.open_orders()
+            for order in strays:
+                oid = order.get("id")
+                if oid:
+                    try:
+                        await broker.cancel_order(oid)
+                    except Exception:
+                        pass
+            if strays:
+                db.memo("startup_canceled_stray_orders", {"count": len(strays)})
+    except Exception as exc:
+        db.memo("startup_hygiene_error", {"error": repr(exc)[:300]})
+
     await _cycle_once(services, graph)  # immediate first cycle
 
     while not stop.is_set() and now_et() < CONTEST_END:

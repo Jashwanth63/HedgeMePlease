@@ -234,7 +234,12 @@ async def news_veto(
 JOURNALIST_SYSTEM = (
     "You write the audit note for one cycle of an automated options desk. Given the "
     "structured cycle record, write two or three plain sentences a judge could read: "
-    "what was decided and why, citing the numbers that mattered. No hype."
+    "what happened and why, citing the numbers that mattered. No hype. The record's "
+    "'outcome' field is the ground truth of what actually happened; your first "
+    "sentence must state it faithfully. Never say premium was collected, a trade was "
+    "made, or a position was taken unless outcome says POSITION OPENED. An approved "
+    "or attempted trade that did not fill must be described as unfilled, with no "
+    "money moved."
 )
 
 

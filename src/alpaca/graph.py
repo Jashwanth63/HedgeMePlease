@@ -396,7 +396,19 @@ def build_graph(services: Services, checkpointer=None):
         return {"executed": {"opened": opened, **target.summary()}}
 
     async def journal(state: CycleState) -> CycleState:
+        executed = state.get("executed") or {}
+        if executed.get("opened") is True:
+            outcome = "POSITION OPENED"
+        elif executed.get("dry_run"):
+            outcome = "DRY RUN ONLY, no order was sent"
+        elif executed:
+            outcome = "ORDER ATTEMPTED BUT NEVER FILLED, no position exists, no premium collected"
+        elif state.get("skip"):
+            outcome = f"NO ENTRY: {state.get('skip')}"
+        else:
+            outcome = "NO ENTRY ATTEMPTED"
         record = {
+            "outcome": outcome,
             "action": state.get("action"),
             "skip": state.get("skip"),
             "gates": state.get("gates"),
