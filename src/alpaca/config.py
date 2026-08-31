@@ -53,10 +53,12 @@ class StrategyConfig:
     # the book cannot quietly become one equity bet wearing four tickers
     clusters: dict[str, str] = field(default_factory=lambda: {
         "SPY": "equity", "QQQ": "equity", "GLD": "metals", "TLT": "rates",
+        "DELL": "single_name", "AVGO": "single_name",
     })
-    cluster_budget_frac: float = 0.5       # max share of sleeve budget per cluster
+    cluster_budget_frac: float = 0.5       # max share of the A sleeve budget per cluster
     cluster_delta_caps: dict[str, float] = field(default_factory=lambda: {
         "equity": 25_000.0, "metals": 10_000.0, "rates": 10_000.0,
+        "single_name": 10_000.0,
     })
     short_delta_target: float = 0.20
     short_delta_band: tuple[float, float] = (0.12, 0.28)
@@ -122,8 +124,54 @@ MACRO_EVENTS: tuple[tuple[datetime, str], ...] = (
 )
 
 EARNINGS_EVENTS: tuple[tuple[datetime, str], ...] = (
+    (datetime(2026, 9, 1, 16, 5, tzinfo=ET), "DELL earnings (after close)"),
     (datetime(2026, 9, 2, 16, 5, tzinfo=ET), "AVGO earnings (after close)"),
 )
+
+
+@dataclass(frozen=True)
+class EventTrade:
+    """One scheduled earnings event Sleeve B trades around."""
+    symbol: str
+    event_time: datetime            # release moment (after close)
+    post_expiry: str                # first expiry after the event
+    crush_entry_start: datetime     # sell the condor in this window, same day
+    crush_entry_end: datetime
+    crush_exit_by: datetime         # cover next morning, unconditionally
+
+
+@dataclass(frozen=True)
+class SleeveBConfig:
+    budget: float = 700.0                  # total max loss across event positions
+    crush_max_loss: float = 350.0          # per crush condor
+    runup_max_debit: float = 200.0         # per run-up strangle (phase 2 of build)
+    crush_move_mult: float = 1.0           # shorts at >= 1x the implied move
+    crush_profit_take: float = 0.50
+    crush_loss_mult: float = 2.5
+    min_credit_frac: float = 0.10          # single-name event credit floor
+    quote_spread_frac: float = 0.35        # single names quote wider than index ETFs
+
+
+SLEEVE_B_EVENTS: tuple[EventTrade, ...] = (
+    EventTrade(
+        symbol="DELL",
+        event_time=datetime(2026, 9, 1, 16, 5, tzinfo=ET),
+        post_expiry="2026-09-04",
+        crush_entry_start=datetime(2026, 9, 1, 15, 30, tzinfo=ET),
+        crush_entry_end=datetime(2026, 9, 1, 15, 55, tzinfo=ET),
+        crush_exit_by=datetime(2026, 9, 2, 10, 0, tzinfo=ET),
+    ),
+    EventTrade(
+        symbol="AVGO",
+        event_time=datetime(2026, 9, 2, 16, 5, tzinfo=ET),
+        post_expiry="2026-09-04",
+        crush_entry_start=datetime(2026, 9, 2, 15, 30, tzinfo=ET),
+        crush_entry_end=datetime(2026, 9, 2, 15, 55, tzinfo=ET),
+        crush_exit_by=datetime(2026, 9, 3, 10, 0, tzinfo=ET),
+    ),
+)
+
+SLEEVE_B = SleeveBConfig()
 
 ENTRY_WINDOWS: dict[int, tuple[time, time]] = {
     0: (time(9, 45), time(15, 30)),   # Monday

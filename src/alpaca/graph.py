@@ -18,7 +18,8 @@ from langgraph.graph import END, START, StateGraph
 
 from .agents import desk
 from .broker.executor import cost_to_close, submit_close, submit_open
-from .config import FLATTEN_AT, STRAT, now_et
+from .config import FLATTEN_AT, SLEEVE_B, SLEEVE_B_EVENTS, STRAT, now_et
+from .strategy.events import build_crush_condor
 from .data.db import Db
 from .model.har import best_forecast, should_demote
 from .model.volutils import daily_stats
@@ -157,6 +158,12 @@ def build_graph(services: Services, checkpointer=None):
                 await submit_close(services.broker, memo, pos, "expiry_day_close")
                 ledger.update(pos)
                 continue
+            if pos.sleeve == "B":
+                event = next((e for e in SLEEVE_B_EVENTS if e.symbol == pos.underlying), None)
+                if event and now >= event.crush_exit_by:
+                    await submit_close(services.broker, memo, pos, "event_crush_exit")
+                    ledger.update(pos)
+                    continue
             cost = await cost_to_close(services.broker, pos)
             if cost is None:
                 continue
@@ -170,6 +177,66 @@ def build_graph(services: Services, checkpointer=None):
             elif cost >= pos.credit * STRAT.loss_close_mult:
                 await submit_close(services.broker, memo, pos, "loss_limit")
                 ledger.update(pos)
+        return {}
+
+    async def sleeve_b(state: CycleState) -> CycleState:
+        """Event scheduler: sells the crush condor inside its entry window.
+        Ignores Sleeve A's windows and cooldowns by design; obeys the account
+        action, the risk engine, the news veto, and its own budget."""
+        now = now_et()
+        if not state.get("market_open") or state.get("action") != AccountAction.OK.value:
+            return {}
+        for event in SLEEVE_B_EVENTS:
+            if not (event.crush_entry_start <= now <= event.crush_entry_end):
+                continue
+            status_key = f"sleeveB:{event.symbol}:crush"
+            if services.db.get_state(status_key):
+                continue
+            # spots for the whole open book too: the stress grid inside the
+            # risk check must see every existing position, not just this event
+            needed = {event.symbol} | {p.underlying for p in ledger.open_positions()}
+            all_spots = await services.broker.spots(sorted(needed))
+            spot = all_spots.get(event.symbol, 0.0)
+            payload = await services.broker.option_chain(
+                event.symbol,
+                expiration_date_gte=event.event_time.date().isoformat(),
+                expiration_date_lte=event.post_expiry,
+                strike_price_gte=spot * 0.75 if spot else None,
+                strike_price_lte=spot * 1.25 if spot else None,
+            )
+            contracts = parse_chain(event.symbol, payload)
+            proposal, diag = build_crush_condor(event, contracts, spot, now)
+            memo("event_crush_candidate", diag)
+            if proposal is None:
+                continue
+            verdict = check_pre_trade(
+                ledger.open_positions(), proposal, state.get("equity", 0.0),
+                ledger.hwm, ledger.day_anchor, ledger.halted, all_spots, now,
+            )
+            memo("event_risk_verdict", {
+                "symbol": event.symbol, "approved": verdict.approved,
+                "reasons": verdict.reasons, "position_id": proposal.position.position_id,
+            })
+            if not verdict.approved:
+                continue
+            try:
+                headlines = await services.broker.news(event.symbol)
+            except Exception:
+                headlines = []
+            vetoed, reason = await desk.news_veto(
+                event.symbol, proposal.summary(), diag, headlines, memo
+            )
+            memo("event_news_veto", {"symbol": event.symbol, "veto": vetoed, "reason": reason})
+            if vetoed:
+                continue
+            if services.dry_run:
+                memo("event_dry_run_would_open", proposal.summary())
+                services.db.set_state(status_key, "dry_run")
+                continue
+            opened = await submit_open(services.broker, memo, proposal.position)
+            if opened:
+                ledger.add(proposal.position, {"event": event.symbol, **diag})
+                services.db.set_state(status_key, "opened")
         return {}
 
     async def decide_entry(state: CycleState) -> CycleState:
@@ -439,6 +506,7 @@ def build_graph(services: Services, checkpointer=None):
     g.add_node("risk_check", risk_check)
     g.add_node("flatten", flatten)
     g.add_node("manage", manage)
+    g.add_node("sleeve_b", sleeve_b)
     g.add_node("decide_entry", decide_entry)
     g.add_node("gather", gather)
     g.add_node("regime", regime)
@@ -457,7 +525,8 @@ def build_graph(services: Services, checkpointer=None):
         {"flatten": "flatten", "manage": "manage"},
     )
     g.add_edge("flatten", "journal")
-    g.add_edge("manage", "decide_entry")
+    g.add_edge("manage", "sleeve_b")
+    g.add_edge("sleeve_b", "decide_entry")
     g.add_conditional_edges(
         "decide_entry",
         lambda s: "journal" if s.get("skip") else "gather",

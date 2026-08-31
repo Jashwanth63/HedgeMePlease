@@ -82,7 +82,8 @@ class FakeBroker:
         self._is_open = is_open
         self.placed_orders: list[dict] = []
         self.canceled: list[str] = []
-        self.spot_map = {"SPY": 650.0, "QQQ": 560.0}
+        self.spot_map = {"SPY": 650.0, "QQQ": 560.0, "GLD": 310.0, "TLT": 90.0,
+                         "DELL": 140.0, "AVGO": 300.0}
 
     async def clock(self) -> dict:
         return {"is_open": self._is_open}
@@ -107,6 +108,13 @@ class FakeBroker:
 
     async def option_chain(self, underlying: str, **kwargs) -> dict:
         spot = self.spot_map.get(underlying, 650.0)
+        if underlying in ("DELL", "AVGO"):
+            step = 1 if spot < 200 else 5
+            lo, hi = int(spot * 0.75), int(spot * 1.25) + step
+            return synthetic_chain(
+                underlying, spot, "2026-09-04", iv=0.65, t_years=4 / 365,
+                strikes=range(lo, hi, step),
+            )
         if kwargs.get("expiration_date_gte"):
             lo = int(spot * 0.95) // 5 * 5
             hi = int(spot * 1.05) // 5 * 5 + 5

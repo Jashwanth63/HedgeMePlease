@@ -11,7 +11,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Optional, Protocol
 
-from ..config import RISK, STRAT, STRESS, now_et
+from ..config import RISK, SLEEVE_B, STRAT, STRESS, now_et
 from .bs import bs
 from .ledger import Position
 from .stress import t_years, worst_cell
@@ -142,9 +142,12 @@ def check_pre_trade(
     if proposal.dte < RISK.min_entry_dte:
         reasons.append(f"dte {proposal.dte} below minimum {RISK.min_entry_dte}")
 
-    if proposal.max_loss > RISK.per_trade_max_loss:
+    sleeve = getattr(proposal.position, "sleeve", "A")
+    per_trade_cap = SLEEVE_B.crush_max_loss if sleeve == "B" else RISK.per_trade_max_loss
+    if proposal.max_loss > per_trade_cap:
         reasons.append(
-            f"per-trade max loss {proposal.max_loss:.0f} exceeds cap {RISK.per_trade_max_loss:.0f}"
+            f"per-trade max loss {proposal.max_loss:.0f} exceeds sleeve {sleeve} "
+            f"cap {per_trade_cap:.0f}"
         )
 
     if len(open_positions) >= RISK.max_positions:
@@ -153,23 +156,26 @@ def check_pre_trade(
     if len(same_und) >= RISK.max_positions_per_underlying:
         reasons.append(f"{proposal.underlying} already has {len(same_und)} positions")
 
-    committed = sum(p.max_loss for p in open_positions)
-    if committed + proposal.max_loss > RISK.sleeve_budget:
+    sleeve_budget = SLEEVE_B.budget if sleeve == "B" else RISK.sleeve_budget
+    committed = sum(p.max_loss for p in open_positions if p.sleeve == sleeve)
+    if committed + proposal.max_loss > sleeve_budget:
         reasons.append(
-            f"sleeve budget: {committed:.0f} committed + {proposal.max_loss:.0f} proposed "
-            f"exceeds {RISK.sleeve_budget:.0f}"
+            f"sleeve {sleeve} budget: {committed:.0f} committed + {proposal.max_loss:.0f} "
+            f"proposed exceeds {sleeve_budget:.0f}"
         )
 
-    prop_cluster = cluster_of(proposal.underlying)
-    cluster_cap = STRAT.cluster_budget_frac * RISK.sleeve_budget
-    cluster_committed = sum(
-        p.max_loss for p in open_positions if cluster_of(p.underlying) == prop_cluster
-    )
-    if cluster_committed + proposal.max_loss > cluster_cap:
-        reasons.append(
-            f"{prop_cluster} cluster budget: {cluster_committed:.0f} committed + "
-            f"{proposal.max_loss:.0f} proposed exceeds {cluster_cap:.0f}"
+    if sleeve == "A":
+        prop_cluster = cluster_of(proposal.underlying)
+        cluster_cap = STRAT.cluster_budget_frac * RISK.sleeve_budget
+        cluster_committed = sum(
+            p.max_loss for p in open_positions
+            if p.sleeve == "A" and cluster_of(p.underlying) == prop_cluster
         )
+        if cluster_committed + proposal.max_loss > cluster_cap:
+            reasons.append(
+                f"{prop_cluster} cluster budget: {cluster_committed:.0f} committed + "
+                f"{proposal.max_loss:.0f} proposed exceeds {cluster_cap:.0f}"
+            )
 
     deltas = cluster_delta_dollars(open_positions + [proposal.position], spots)
     for cluster, exposure in deltas.items():
