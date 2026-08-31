@@ -46,7 +46,7 @@ def test_entry_context_stored(tmp_path):
     row = db.conn.execute("SELECT entry_context FROM trades WHERE trade_id='SLA-CTX-1'").fetchone()
     stored = json.loads(row["entry_context"])
     assert stored["gates"]["iv_rv_ratio"] == 1.36
-    assert "proposer" in stored["proposer_why"]
+    assert stored["proposer_why"] == "tighter wings fit the regime"
 
 
 def test_equity_anchors_and_halt(tmp_path):
