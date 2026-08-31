@@ -94,12 +94,58 @@ class Db:
 
     # ---- audit trail ---------------------------------------------------
 
+    _SLEEVE_A_EVENTS = {
+        "gates", "candidates", "proposal_chosen", "news_veto", "risk_verdict",
+        "dry_run_would_open", "entry_skip", "rv_forecast", "regime_view",
+    }
+    _ROLE_SLEEVES = {
+        "regime_analyst": "A", "proposer": "A", "news_analyst": "A",
+        "event_analyst": "B", "hedge_analyst": "C", "journalist": "core",
+    }
+
+    @classmethod
+    def _infer_sleeve(cls, event: str, detail: dict[str, Any]) -> str:
+        if event.startswith("event_"):
+            return "B"
+        if event.startswith("hedge_"):
+            return "C"
+        if event in cls._SLEEVE_A_EVENTS:
+            return "A"
+        if event == "llm_call":
+            return cls._ROLE_SLEEVES.get(str(detail.get("role", "")), "core")
+        return "core"
+
     def memo(self, event: str, detail: dict[str, Any]) -> None:
+        if "sleeve" not in detail:
+            detail = {"sleeve": self._infer_sleeve(event, detail), **detail}
         self.conn.execute(
             "INSERT INTO memos (ts, event, detail_json) VALUES (?, ?, ?)",
             (now_et().isoformat(), event, json.dumps(detail, default=str)),
         )
         self.conn.commit()
+
+    def sleeve_pnl(self) -> dict[str, dict[str, float]]:
+        """Realized, unrealized, and committed risk per sleeve."""
+        out: dict[str, dict[str, float]] = {}
+        rows = self.conn.execute(
+            "SELECT sleeve, "
+            "SUM(CASE WHEN status='closed' THEN realized_pnl ELSE 0 END) AS realized, "
+            "SUM(CASE WHEN status IN ('open','closing') THEN COALESCE(unrealized_pnl, 0) "
+            "ELSE 0 END) AS unrealized, "
+            "SUM(CASE WHEN status IN ('open','closing','pending') THEN max_loss ELSE 0 END) "
+            "AS committed, "
+            "COUNT(CASE WHEN status IN ('open','closing') THEN 1 END) AS open_count "
+            "FROM trades GROUP BY sleeve"
+        ).fetchall()
+        for r in rows:
+            out[r["sleeve"]] = {
+                "realized": round(r["realized"] or 0.0, 2),
+                "unrealized": round(r["unrealized"] or 0.0, 2),
+                "net": round((r["realized"] or 0.0) + (r["unrealized"] or 0.0), 2),
+                "committed": round(r["committed"] or 0.0, 2),
+                "open": r["open_count"] or 0,
+            }
+        return out
 
     def recent_memos(self, limit: int = 50) -> list[dict]:
         rows = self.conn.execute(

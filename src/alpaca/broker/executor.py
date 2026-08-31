@@ -165,7 +165,7 @@ async def submit_open(
     mid = await net_mid(mcp, position, closing=False)
     is_debit = max_debit_price is not None
     if mid is None or (not is_debit and mid >= 0) or (is_debit and mid <= 0):
-        memo("open_abandoned", {"position": position.position_id, "reason": "no usable mid"})
+        memo("open_abandoned", {"position": position.position_id, "sleeve": position.sleeve, "reason": "no usable mid"})
         position.status = "abandoned"
         return False
 
@@ -176,7 +176,7 @@ async def submit_open(
         prices = ladder_prices(mid, position.width)
         abandon_reason = "mid already below credit floor"
     if not prices:
-        memo("open_abandoned", {"position": position.position_id, "reason": abandon_reason})
+        memo("open_abandoned", {"position": position.position_id, "sleeve": position.sleeve, "reason": abandon_reason})
         position.status = "abandoned"
         return False
 
@@ -187,7 +187,7 @@ async def submit_open(
                 qty=position.qty, legs=open_legs(position), limit_price=price, client_order_id=coid
             )
         except Exception as exc:
-            memo("open_rejected", {"position": position.position_id, "error": str(exc)[:400]})
+            memo("open_rejected", {"position": position.position_id, "sleeve": position.sleeve, "error": str(exc)[:400]})
             position.status = "abandoned"
             return False
 
@@ -199,7 +199,7 @@ async def submit_open(
                 position.max_loss = _max_loss_for(position)
             position.status = "open"
             position.client_order_id = coid
-            memo("opened", {"position": position.position_id, "price": price, "fill": fill})
+            memo("opened", {"position": position.position_id, "sleeve": position.sleeve, "price": price, "fill": fill})
             return True
 
         final = await _confirmed_cancel(mcp, memo, order, coid)
@@ -212,17 +212,17 @@ async def submit_open(
             position.max_loss = _max_loss_for(position)
             position.status = "open"
             position.client_order_id = coid
-            memo("opened_partial", {"position": position.position_id, "filled_qty": partial, "fill": fill})
+            memo("opened_partial", {"position": position.position_id, "sleeve": position.sleeve, "filled_qty": partial, "fill": fill})
             return True
         if final is None or str(final.get("status", "")).lower() not in TERMINAL:
             # the old order may still be live at the exchange; requoting now
             # risks a double fill, so abandon the ladder entirely
-            memo("open_abandoned", {"position": position.position_id, "reason": "cancel unconfirmed"})
+            memo("open_abandoned", {"position": position.position_id, "sleeve": position.sleeve, "reason": "cancel unconfirmed"})
             position.status = "abandoned"
             return False
-        memo("open_requote", {"position": position.position_id, "attempt": attempt, "price": price})
+        memo("open_requote", {"position": position.position_id, "sleeve": position.sleeve, "attempt": attempt, "price": price})
 
-    memo("open_abandoned", {"position": position.position_id, "reason": "time box expired unfilled"})
+    memo("open_abandoned", {"position": position.position_id, "sleeve": position.sleeve, "reason": "time box expired unfilled"})
     position.status = "abandoned"
     return False
 
@@ -230,7 +230,7 @@ async def submit_open(
 async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
     mid = await net_mid(mcp, position, closing=True)
     if mid is None:
-        memo("close_no_quotes", {"position": position.position_id})
+        memo("close_no_quotes", {"position": position.position_id, "sleeve": position.sleeve})
         return False
     position.status = "closing"
     long_close = mid < 0  # closing an all-long structure nets a credit to us
@@ -248,7 +248,7 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
                 qty=position.qty, legs=close_legs(position), limit_price=price, client_order_id=coid
             )
         except Exception as exc:
-            memo("close_rejected", {"position": position.position_id, "error": str(exc)[:400]})
+            memo("close_rejected", {"position": position.position_id, "sleeve": position.sleeve, "error": str(exc)[:400]})
             return False
 
         status, order = await _await_terminal(mcp, coid, EXEC.wait_seconds)
@@ -271,10 +271,10 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
             return True
         final = await _confirmed_cancel(mcp, memo, order, coid)
         if final is None or str(final.get("status", "")).lower() not in TERMINAL:
-            memo("close_cancel_unconfirmed", {"position": position.position_id, "reason": reason})
+            memo("close_cancel_unconfirmed", {"position": position.position_id, "sleeve": position.sleeve, "reason": reason})
             return False
 
-    memo("close_unfilled", {"position": position.position_id, "reason": reason})
+    memo("close_unfilled", {"position": position.position_id, "sleeve": position.sleeve, "reason": reason})
     return False
 
 

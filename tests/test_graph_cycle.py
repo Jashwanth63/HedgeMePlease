@@ -33,7 +33,8 @@ def test_full_dry_cycle_reaches_execution(tmp_path, monkeypatch):
     assert result.get("executed", {}).get("dry_run") is True
     events = [m["event"] for m in services.db.recent_memos(100)]
     for expected in ("cycle_start", "gates", "candidates", "proposal_chosen",
-                     "news_veto", "risk_verdict", "dry_run_would_open", "cycle_end"):
+                     "news_veto", "risk_verdict", "dry_run_would_open",
+                     "sleeve_pnl", "cycle_end"):
         assert expected in events, f"missing {expected} in {events}"
     # agent-unavailable defaults must never be cached as the day's regime view
     assert services.db.get_state("regime:2026-08-31") is None

@@ -182,6 +182,11 @@ def _report() -> None:
         print(f"  last snapshot   {last['ts'][:16]}  {last['equity']:,.2f}  "
               f"dd {last['drawdown']:.2%}  action {last['action']}")
 
+    print("SLEEVES")
+    for name, s in sorted(db.sleeve_pnl().items()):
+        print(f"  [{name}] net {s['net']:+,.0f}  realized {s['realized']:+,.0f}  "
+              f"unrealized {s['unrealized']:+,.0f}  committed {s['committed']:,.0f}  open {s['open']}")
+
     print("FORECAST vs REALIZED (annualized vol)")
     for symbol in STRAT.underlyings:
         pairs = db.forecast_vs_realized(symbol, limit=10)
@@ -205,7 +210,7 @@ def _report() -> None:
             pnl = f"open, {t['unrealized_pnl']:+,.0f} unrealized"
         else:
             pnl = "open"
-        print(f"  {t['trade_id']}  {t['symbol']} {t['structure']} x{t['qty']}  "
+        print(f"  [{t['sleeve']}] {t['trade_id']}  {t['symbol']} {t['structure']} x{t['qty']}  "
               f"credit {t['credit']:.2f}  max_loss {t['max_loss']:.0f}  [{t['status']}]  pnl {pnl}"
               + (f"  exit: {t['close_reason']}" if t["close_reason"] else ""))
         if t["entry_context"]:

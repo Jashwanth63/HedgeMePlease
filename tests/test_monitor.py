@@ -23,6 +23,8 @@ def test_render_shows_account_trades_and_memos(tmp_path):
     assert "gates" in page
     assert "9.3%" in page
     assert "unrealized" in page and "+55" in page
+    assert "sleeves" in page
+    assert "[A]" in page
 
 
 def test_render_empty_db_does_not_crash(tmp_path):

@@ -53,6 +53,19 @@ def render(db: Db) -> str:
     else:
         parts.append("<pre class='dim'>no snapshots yet</pre>")
 
+    parts.append("<h2>sleeves</h2>")
+    pnl = db.sleeve_pnl()
+    if not pnl:
+        parts.append("<pre class='dim'>no trades yet</pre>")
+    for name in sorted(pnl):
+        s = pnl[name]
+        cls = "good" if s["net"] >= 0 else "bad"
+        parts.append(
+            f"<pre>[{_e(name)}]  net <span class='{cls}'>{s['net']:+,.0f}</span>  "
+            f"(realized {s['realized']:+,.0f}, unrealized {s['unrealized']:+,.0f})  "
+            f"committed {s['committed']:,.0f}  open {s['open']}</pre>"
+        )
+
     parts.append("<h2>forecasts</h2>")
     for symbol in STRAT.underlyings:
         latest = db.conn.execute(
@@ -82,7 +95,7 @@ def render(db: Db) -> str:
         else:
             pnl, pnl_cls = "awaiting first mark", "dim"
         parts.append(
-            f"<pre>{_e(t['trade_id'])}  {_e(t['symbol'])} x{t['qty']}  credit {t['credit']:.2f}  "
+            f"<pre>[{_e(t['sleeve'])}] {_e(t['trade_id'])}  {_e(t['symbol'])} x{t['qty']}  credit {t['credit']:.2f}  "
             f"max_loss {t['max_loss']:.0f}  [{_e(t['status'])}]  "
             f"pnl <span class='{pnl_cls}'>{_e(pnl)}</span>"
             + (f"  exit: {_e(t['close_reason'])}" if t["close_reason"] else "")

@@ -76,6 +76,52 @@ def test_memos_and_state(tmp_path):
     assert db.get_state("missing", "dflt") == "dflt"
 
 
+def test_memo_sleeve_inference(tmp_path):
+    import json as _json
+
+    db = Db(tmp_path / "t.db")
+    db.memo("gates", {"underlying": "SPY"})
+    db.memo("event_crush_candidate", {"symbol": "DELL"})
+    db.memo("hedge_view", {"buy_now": False})
+    db.memo("cycle_start", {"equity": 1.0})
+    db.memo("llm_call", {"role": "event_analyst", "input": "x", "response": "y"})
+    db.memo("opened", {"sleeve": "B", "position": "SLB-X"})  # explicit wins
+
+    rows = {r["event"]: _json.loads(r["detail_json"]) for r in db.conn.execute(
+        "SELECT event, detail_json FROM memos"
+    ).fetchall()}
+    assert rows["gates"]["sleeve"] == "A"
+    assert rows["event_crush_candidate"]["sleeve"] == "B"
+    assert rows["hedge_view"]["sleeve"] == "C"
+    assert rows["cycle_start"]["sleeve"] == "core"
+    assert rows["llm_call"]["sleeve"] == "B"
+    assert rows["opened"]["sleeve"] == "B"
+
+
+def test_sleeve_pnl_aggregation(tmp_path):
+    db = Db(tmp_path / "t.db")
+    ledger = Ledger(db)
+
+    a = make_position("SLA-1")
+    ledger.add(a)
+    a.status = "closed"
+    a.realized_pnl = 55.0
+    ledger.update(a)
+
+    b = make_position("SLB-1")
+    b.sleeve = "B"
+    b.status = "open"
+    b.max_loss = 350.0
+    ledger.add(b)
+    ledger.mark_position("SLB-1", 1.00, 25.0)
+
+    pnl = db.sleeve_pnl()
+    assert pnl["A"]["realized"] == 55.0 and pnl["A"]["open"] == 0
+    assert pnl["B"]["unrealized"] == 25.0
+    assert pnl["B"]["committed"] == 350.0
+    assert pnl["B"]["net"] == 25.0
+
+
 def test_forecast_vs_realized_join(tmp_path):
     from alpaca.model.volutils import DayStats
 

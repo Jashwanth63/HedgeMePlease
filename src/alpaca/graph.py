@@ -655,6 +655,7 @@ def build_graph(services: Services, checkpointer=None):
         note = await desk.journal_note(record, memo)
         if note:
             memo("cycle_note", {"note": note})
+        memo("sleeve_pnl", {"sleeve": "core", **services.db.sleeve_pnl()})
         memo("cycle_end", {"open_positions": record["open_positions"], "skip": state.get("skip")})
         return {}
 
