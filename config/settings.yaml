@@ -28,8 +28,9 @@ risk:
   warn_drawdown_pct: 0.02       # 2.0% warning threshold (reduce sizing & block entries)
   kill_drawdown_pct: 0.035      # 3.5% hard kill switch (liquidate & stop)
   max_portfolio_bp_pct: 0.30    # Maximum 30% buying power allocation
-  max_contracts_per_trade: 5
-  single_trade_max_loss_pct: 0.01
+  max_contracts_per_trade: 10   # Increased to 10 contracts per trade
+  single_trade_max_loss_pct: 0.03 # 3% risk allocation per trade
+
 
 strategy:
   target_delta: 0.20

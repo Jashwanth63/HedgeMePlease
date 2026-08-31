@@ -195,7 +195,7 @@ class TradingStateMachineBuilder:
         errors = []
 
         for sym, condor_dict in built_condors.items():
-            contracts = min(1, sized_contracts.get(sym, 1))
+            contracts = max(1, sized_contracts.get(sym, 1))
             trade_id = condor_dict["trade_id"]
 
             try:
@@ -309,24 +309,17 @@ class TradingStateMachineBuilder:
                 else:
                     price = max(0.10, round(strike * math.exp(-0.04 * t_years) * norm.cdf(-d2) - spot * norm.cdf(-d1), 2))
 
-                chain_list.append({
-                    "symbol": c["symbol"],
-                    "option_type": opt_type,
-                    "strike": strike,
-                    "expiration": best_exp,
-                    "dte": actual_dte,
-                    "delta": delta,
-                    "bid": max(0.05, price - 0.05),
-                    "ask": price + 0.05,
-                    "price": price,
-                })
-            return chain_list
+            has_calls_above = any(c["option_type"] == "CALL" and c["strike"] > spot for c in chain_list)
+            has_puts_below = any(c["option_type"] == "PUT" and c["strike"] < spot for c in chain_list)
+            if has_calls_above and has_puts_below and len(chain_list) >= 8:
+                return chain_list
 
-        # Fallback for offline / synthetic testing
-        target_dte = self.settings.strategy.target_dte
+        # Fallback for offline / synthetic testing or when live chain lacks near-spot strikes
+        target_dte = max(1, self.settings.strategy.target_dte)
         t_years = max(0.01, target_dte / 365.0)
         exp_date = (today + timedelta(days=target_dte)).strftime("%Y-%m-%d")
         yy, mm, dd = exp_date[2:4], exp_date[5:7], exp_date[8:10]
+        chain_list = []
 
         for strike_offset in range(-60, 61, 2):
             strike = round(spot + strike_offset, 2)

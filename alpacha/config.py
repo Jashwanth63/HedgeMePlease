@@ -49,8 +49,9 @@ class RiskConfig:
     warn_drawdown_pct: float = 0.02
     kill_drawdown_pct: float = 0.035
     max_portfolio_bp_pct: float = 0.30
-    max_contracts_per_trade: int = 5
-    single_trade_max_loss_pct: float = 0.01
+    max_contracts_per_trade: int = 10
+    single_trade_max_loss_pct: float = 0.03
+
 
 
 @dataclass
