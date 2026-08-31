@@ -1,10 +1,41 @@
 import asyncio
 
 import alpaca.broker.executor as executor
-from alpaca.broker.executor import close_legs, ladder_prices, open_legs, submit_open
+from alpaca.broker.executor import close_legs, ladder_prices, net_mid, open_legs, submit_open
 from alpaca.config import ExecutorConfig
 
 from test_stress import make_condor
+
+
+class ZeroBidWingQuotes:
+    """Shorts quoted normally; wings worthless with a zero bid, as near expiry."""
+
+    async def option_quotes(self, symbols):
+        out = {}
+        for s in symbols:
+            if "P00640" in s or "C00662" in s:
+                out[s] = {"bp": 0.73, "ap": 0.77}
+            else:
+                out[s] = {"bp": 0.0, "ap": 0.02}
+        return out
+
+
+def test_net_mid_tolerates_zero_bid_wings():
+    cost = asyncio.run(net_mid(ZeroBidWingQuotes(), make_condor(), closing=True))
+    assert cost is not None
+    assert abs(cost - (0.75 * 2 - 0.01 * 2)) < 1e-9
+
+
+def test_net_mid_refuses_fat_ask_over_zero_bid():
+    class Fat(ZeroBidWingQuotes):
+        async def option_quotes(self, symbols):
+            q = await super().option_quotes(symbols)
+            for v in q.values():
+                if v["bp"] == 0.0:
+                    v["ap"] = 0.50
+            return q
+
+    assert asyncio.run(net_mid(Fat(), make_condor(), closing=True)) is None
 
 
 def test_ladder_prices_concede_toward_zero():
@@ -97,6 +128,26 @@ def test_submit_open_fills_and_updates_credit(monkeypatch):
     assert pos.status == "open"
     assert abs(pos.credit - 1.18) < 1e-9
     assert "opened" in memos
+
+
+class StuckCancelBroker(NeverFillBroker):
+    """Order never fills AND the cancel never confirms: the danger case."""
+
+    async def cancel_order(self, order_id):
+        return {"ok": True}  # exchange never acknowledges; status stays accepted
+
+
+def test_unconfirmed_cancel_aborts_ladder(monkeypatch):
+    fast_exec(monkeypatch)
+    broker = StuckCancelBroker()
+    pos = make_condor()
+    memos = []
+    ok = asyncio.run(submit_open(broker, lambda e, d: memos.append(e), pos))
+    assert not ok
+    assert pos.status == "abandoned"
+    assert len(broker.orders) == 1, "must not requote while the old order may be live"
+    assert "open_abandoned" in memos
+    assert "open_requote" not in memos
 
 
 def test_submit_open_times_out_and_cancels(monkeypatch):

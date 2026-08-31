@@ -164,6 +164,20 @@ class FakeBroker:
         return {"ok": True}
 
 
+@pytest.fixture(autouse=True)
+def _agents_offline(monkeypatch):
+    """Tests are offline and free: no OpenRouter key ever reaches the desk,
+    even when the developer's .env has a real one loaded."""
+    import alpaca.agents.desk as desk
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    desk._llm = None
+    desk._llm_checked = False
+    yield
+    desk._llm = None
+    desk._llm_checked = False
+
+
 @pytest.fixture
 def fixed_now() -> datetime:
     return FIXED_NOW

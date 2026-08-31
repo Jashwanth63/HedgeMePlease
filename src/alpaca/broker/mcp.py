@@ -48,7 +48,8 @@ class AlpacaMCP:
             )
         env = {**os.environ, **alpaca_env()}
         # under systemd the service PATH is minimal; resolve uv absolutely
-        uv_cmd = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
+        uv_name = "uv.exe" if os.name == "nt" else "uv"
+        uv_cmd = shutil.which("uv") or str(Path.home() / ".local" / "bin" / uv_name)
         params = StdioServerParameters(
             command=uv_cmd,
             args=["run", "--directory", str(server_dir), "alpaca-mcp-server", "--transport", "stdio"],

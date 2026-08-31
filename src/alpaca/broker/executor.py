@@ -66,8 +66,13 @@ async def net_mid(mcp, position: Position, closing: bool) -> Optional[float]:
     for leg in position.legs:
         q = quotes.get(leg.symbol) or {}
         bp, ap = float(q.get("bp") or 0.0), float(q.get("ap") or 0.0)
-        if bp <= 0 or ap <= 0:
+        if ap <= 0 or bp < 0:
             return None
+        if bp == 0 and ap > 0.10:
+            return None  # zero bid under a fat ask is a stale or garbage quote
+        # zero bid with a tiny ask is the normal state of a worthless far OTM
+        # wing near expiry; refusing it would block profit-taking and the
+        # contest-end flatten exactly when the condor is winning
         mid = (bp + ap) / 2.0
         opening_sign = 1 if leg.side == "buy" else -1
         sign = -opening_sign if closing else opening_sign
@@ -173,6 +178,12 @@ async def submit_open(mcp, memo, position: Position) -> bool:
             position.client_order_id = coid
             memo("opened_partial", {"position": position.position_id, "filled_qty": partial, "fill": fill})
             return True
+        if final is None or str(final.get("status", "")).lower() not in TERMINAL:
+            # the old order may still be live at the exchange; requoting now
+            # risks a double fill, so abandon the ladder entirely
+            memo("open_abandoned", {"position": position.position_id, "reason": "cancel unconfirmed"})
+            position.status = "abandoned"
+            return False
         memo("open_requote", {"position": position.position_id, "attempt": attempt, "price": price})
 
     memo("open_abandoned", {"position": position.position_id, "reason": "time box expired unfilled"})
@@ -188,9 +199,10 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
     position.status = "closing"
 
     steps = EXEC.max_improvements + EXEC.close_extra_steps + 1
-    for attempt in range(steps):
+    stamp = now_et().strftime("%H%M%S")  # close ladders may rerun across cycles;
+    for attempt in range(steps):        # client order ids must never repeat
         price = round(max(mid, 0.01) + EXEC.improve_step * attempt, 2)
-        coid = f"{position.position_id}-x{attempt}"
+        coid = f"{position.position_id}-x{attempt}-{stamp}"
         try:
             await mcp.place_option_order(
                 qty=position.qty, legs=close_legs(position), limit_price=price, client_order_id=coid
@@ -214,7 +226,10 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
                 "debit": debit, "realized_pnl": position.realized_pnl,
             })
             return True
-        await _confirmed_cancel(mcp, memo, order, coid)
+        final = await _confirmed_cancel(mcp, memo, order, coid)
+        if final is None or str(final.get("status", "")).lower() not in TERMINAL:
+            memo("close_cancel_unconfirmed", {"position": position.position_id, "reason": reason})
+            return False
 
     memo("close_unfilled", {"position": position.position_id, "reason": reason})
     return False

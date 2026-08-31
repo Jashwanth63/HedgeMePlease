@@ -157,9 +157,14 @@ async def _flatten(halt: bool) -> None:
                     await mcp.cancel_order(oid)
                 except Exception:
                     pass
-        for pos in ledger.open_positions():
+
+        async def _close(pos):
             await submit_close(mcp, services.db.memo, pos, "manual_flatten")
             ledger.update(pos)
+
+        open_pos = ledger.open_positions()
+        if open_pos:
+            await asyncio.gather(*[_close(p) for p in open_pos])
     print("flatten pass complete")
 
 

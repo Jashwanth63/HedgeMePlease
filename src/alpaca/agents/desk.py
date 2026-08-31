@@ -70,6 +70,7 @@ class RegimeView:
     delta_target: float = STRAT.short_delta_target
     size_factor: float = 1.0
     note: str = "deterministic defaults (agent unavailable)"
+    source: str = "default"       # "llm" only when the agent actually answered
 
 
 def parse_regime(raw: str) -> Optional[RegimeView]:
@@ -86,6 +87,7 @@ def parse_regime(raw: str) -> Optional[RegimeView]:
             delta_target=clamp(float(obj.get("delta_target", STRAT.short_delta_target)), CLAMPS.delta_target),
             size_factor=clamp(float(obj.get("size_factor", 1.0)), CLAMPS.size_factor),
             note=str(obj.get("note", ""))[:400],
+            source="llm",
         )
     except (TypeError, ValueError):
         return None

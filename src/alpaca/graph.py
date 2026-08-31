@@ -8,6 +8,7 @@ JSON-serializable summaries so checkpointing stays clean.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from typing import Any, Optional, TypedDict
@@ -123,9 +124,14 @@ def build_graph(services: Services, checkpointer=None):
                     await services.broker.cancel_order(oid)
                 except Exception:
                     pass
-        for pos in ledger.open_positions():
+
+        async def _close(pos):
             await submit_close(services.broker, memo, pos, "kill_switch")
             ledger.update(pos)
+
+        open_pos = ledger.open_positions()
+        if open_pos:  # concurrent: an emergency flatten must not queue behind ladders
+            await asyncio.gather(*[_close(p) for p in open_pos])
         return {"skip": "kill switch"}
 
     async def manage(state: CycleState) -> CycleState:
@@ -230,7 +236,14 @@ def build_graph(services: Services, checkpointer=None):
             {"evidence": state.get("evidence", {}), "date": today}, memo
         )
         payload = asdict(view)
-        services.db.set_state(f"regime:{today}", payload)
+        has_evidence = any(
+            (ev or {}).get("near_iv") and (ev or {}).get("rv_forecast")
+            for ev in (state.get("evidence") or {}).values()
+        )
+        # cache only a real agent answer over real evidence; a transient LLM
+        # failure or a thin premarket read must not lock defaults in all day
+        if payload.get("source") == "llm" and has_evidence:
+            services.db.set_state(f"regime:{today}", payload)
         memo("regime_view", payload)
         return {"regime": payload}
 
@@ -347,12 +360,16 @@ def build_graph(services: Services, checkpointer=None):
             return {"verdict": result, "skip": "size factor too small"}
         if eff < 1.0:
             # reduction floors at one contract: you cannot trade half a condor
+            old_qty = target.qty
             new_qty = max(1, int(target.qty * eff))
             unit_loss = (target.width - target.credit) * 100.0
             target.qty = new_qty
             target.position.qty = new_qty
             target.max_loss = round(unit_loss * new_qty, 2)
             target.position.max_loss = target.max_loss
+            scale = new_qty / old_qty
+            target.net_delta_dollars *= scale
+            target.net_vega_dollars *= scale
         return {"verdict": result}
 
     async def execute(state: CycleState) -> CycleState:
