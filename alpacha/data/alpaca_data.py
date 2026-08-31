@@ -13,6 +13,7 @@ from alpaca.trading.client import TradingClient
 from alpaca.data.historical.stock import StockHistoricalDataClient
 from alpaca.data.historical.option import OptionHistoricalDataClient
 from alpaca.data.requests import StockBarsRequest, OptionChainRequest
+from alpaca.data.enums import DataFeed
 from alpaca.data.timeframe import TimeFrame
 
 from alpacha.config import Settings
@@ -64,11 +65,13 @@ class AlpacaDataClient:
             end = datetime.now(timezone.utc)
 
         try:
+            feed = DataFeed.IEX if self.settings.app.paper else DataFeed.SIP
             req = StockBarsRequest(
                 symbol_or_symbols=symbol,
                 timeframe=TimeFrame.Minute,
                 start=start,
                 end=end,
+                feed=feed,
             )
             barset = self.stock_data_client.get_stock_bars(req)
             if symbol in barset.data:
