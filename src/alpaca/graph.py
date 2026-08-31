@@ -264,11 +264,15 @@ def build_graph(services: Services, checkpointer=None):
             cands = proposals.get(und)
             if not cands:
                 continue
-            idx = await desk.choose_candidate([c.summary() for c in cands], regime_note, memo)
+            idx, why = await desk.choose_candidate([c.summary() for c in cands], regime_note, memo)
             chosen = cands[idx]
             services.scratch["target"] = chosen
-            memo("proposal_chosen", {"underlying": und, "index": idx, **chosen.summary()})
-            return {"chosen": chosen.summary()}
+            services.scratch["proposer_why"] = why
+            memo("proposal_chosen", {
+                "underlying": und, "index": idx, "why": why,
+                "position_id": chosen.position.position_id, **chosen.summary(),
+            })
+            return {"chosen": {**chosen.summary(), "why": why}}
         return {"skip": "no viable candidates"}
 
     async def veto(state: CycleState) -> CycleState:
@@ -283,7 +287,10 @@ def build_graph(services: Services, checkpointer=None):
             target.underlying, target.summary(),
             (state.get("gates") or {}).get(target.underlying, {}), headlines, memo,
         )
-        memo("news_veto", {"underlying": target.underlying, "veto": vetoed, "reason": reason})
+        memo("news_veto", {
+            "underlying": target.underlying, "veto": vetoed, "reason": reason,
+            "position_id": target.position.position_id,
+        })
         if vetoed:
             return {"veto": {"veto": True, "reason": reason}, "skip": "news veto"}
         return {"veto": {"veto": False, "reason": reason}}
@@ -303,15 +310,21 @@ def build_graph(services: Services, checkpointer=None):
             "size_factor": verdict.size_factor,
             "regime_size_factor": regime_size,
         }
-        memo("risk_verdict", {"underlying": target.underlying, **result})
+        memo("risk_verdict", {
+            "underlying": target.underlying,
+            "position_id": target.position.position_id,
+            **result,
+        })
         if not verdict.approved:
             return {"verdict": result, "skip": "risk engine rejected"}
         eff = verdict.size_factor * regime_size
+        if eff < 0.5:
+            memo("entry_skip", {"underlying": target.underlying,
+                               "reason": f"combined size factor {eff:.2f} below 0.5"})
+            return {"verdict": result, "skip": "size factor too small"}
         if eff < 1.0:
-            new_qty = int(target.qty * eff)
-            if new_qty < 1:
-                memo("entry_skip", {"underlying": target.underlying, "reason": "size factor zeroed qty"})
-                return {"verdict": result, "skip": "size factor zeroed"}
+            # reduction floors at one contract: you cannot trade half a condor
+            new_qty = max(1, int(target.qty * eff))
             unit_loss = (target.width - target.credit) * 100.0
             target.qty = new_qty
             target.position.qty = new_qty
@@ -323,12 +336,20 @@ def build_graph(services: Services, checkpointer=None):
         target = services.scratch.get("target")
         if target is None:
             return {"skip": "no target"}
+        entry_context = {
+            "evidence": (state.get("evidence") or {}).get(target.underlying),
+            "gates": (state.get("gates") or {}).get(target.underlying),
+            "regime": state.get("regime"),
+            "proposer_why": services.scratch.get("proposer_why"),
+            "veto": state.get("veto"),
+            "verdict": state.get("verdict"),
+        }
         if services.dry_run:
             memo("dry_run_would_open", target.summary())
             return {"executed": {"dry_run": True, **target.summary()}}
         opened = await submit_open(services.broker, memo, target.position)
         if opened:
-            ledger.add(target.position)
+            ledger.add(target.position, entry_context)
         return {"executed": {"opened": opened, **target.summary()}}
 
     async def journal(state: CycleState) -> CycleState:

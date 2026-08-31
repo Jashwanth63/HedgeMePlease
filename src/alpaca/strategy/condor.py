@@ -120,6 +120,7 @@ class Proposal:
 
     def summary(self) -> dict:
         return {
+            "position_id": self.position.position_id,
             "underlying": self.underlying,
             "structure": self.structure,
             "qty": self.qty,

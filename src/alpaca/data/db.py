@@ -29,7 +29,8 @@ CREATE TABLE IF NOT EXISTS trades (
     close_order_id TEXT,
     exit_debit REAL,
     realized_pnl REAL,
-    close_reason TEXT
+    close_reason TEXT,
+    entry_context TEXT
 );
 CREATE TABLE IF NOT EXISTS forecasts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +78,9 @@ class Db:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
+        cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
+        if "entry_context" not in cols:
+            self.conn.execute("ALTER TABLE trades ADD COLUMN entry_context TEXT")
         self.conn.commit()
 
     def close(self) -> None:

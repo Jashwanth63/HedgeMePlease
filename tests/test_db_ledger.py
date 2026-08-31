@@ -36,6 +36,19 @@ def test_trade_roundtrip(tmp_path):
     assert ledger.all_positions()[0].realized_pnl == 55.0
 
 
+def test_entry_context_stored(tmp_path):
+    import json
+
+    db = Db(tmp_path / "t.db")
+    ledger = Ledger(db)
+    ctx = {"gates": {"iv_rv_ratio": 1.36}, "proposer_why": "tighter wings fit the regime"}
+    ledger.add(make_position("SLA-CTX-1"), entry_context=ctx)
+    row = db.conn.execute("SELECT entry_context FROM trades WHERE trade_id='SLA-CTX-1'").fetchone()
+    stored = json.loads(row["entry_context"])
+    assert stored["gates"]["iv_rv_ratio"] == 1.36
+    assert "proposer" in stored["proposer_why"]
+
+
 def test_equity_anchors_and_halt(tmp_path):
     db = Db(tmp_path / "t.db")
     ledger = Ledger(db)

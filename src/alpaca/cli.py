@@ -155,9 +155,58 @@ async def _flatten(halt: bool) -> None:
     print("flatten pass complete")
 
 
+def _report() -> None:
+    """Contest evidence in one place: equity path, forecasts vs realized, trades with reasoning."""
+    db = Db()
+
+    rows = db.conn.execute(
+        "SELECT ts, equity, peak, drawdown, action FROM risk_snapshots ORDER BY id"
+    ).fetchall()
+    if rows:
+        first, last = rows[0], rows[-1]
+        print("EQUITY")
+        print(f"  first snapshot  {first['ts'][:16]}  {first['equity']:,.2f}")
+        print(f"  last snapshot   {last['ts'][:16]}  {last['equity']:,.2f}  "
+              f"dd {last['drawdown']:.2%}  action {last['action']}")
+
+    print("FORECAST vs REALIZED (annualized vol)")
+    for symbol in STRAT.underlyings:
+        pairs = db.forecast_vs_realized(symbol, limit=10)
+        latest = db.conn.execute(
+            "SELECT ts, rv_forecast, method FROM forecasts WHERE symbol=? ORDER BY id DESC LIMIT 1",
+            (symbol,),
+        ).fetchone()
+        if latest:
+            print(f"  {symbol}: latest forecast {latest['rv_forecast']:.1%} ({latest['method']}, {latest['ts'][:16]})")
+        for f, r in pairs:
+            print(f"    forecast {f:.1%} -> realized next day {r:.1%}  (miss {abs(r / f - 1):.0%})" if f else "")
+
+    print("TRADES")
+    trades = db.conn.execute("SELECT * FROM trades ORDER BY opened_at").fetchall()
+    if not trades:
+        print("  none yet")
+    for t in trades:
+        pnl = f"{t['realized_pnl']:+,.0f}" if t["realized_pnl"] is not None else "open"
+        print(f"  {t['trade_id']}  {t['symbol']} {t['structure']} x{t['qty']}  "
+              f"credit {t['credit']:.2f}  max_loss {t['max_loss']:.0f}  [{t['status']}]  pnl {pnl}"
+              + (f"  exit: {t['close_reason']}" if t["close_reason"] else ""))
+        if t["entry_context"]:
+            ctx = json.loads(t["entry_context"])
+            gates = ctx.get("gates") or {}
+            regime = ctx.get("regime") or {}
+            print(f"      edge ratio {gates.get('iv_rv_ratio')}  rv {gates.get('rv_forecast')}  "
+                  f"near iv {gates.get('near_atm_iv')}  regime {regime.get('stance')}")
+            if ctx.get("proposer_why"):
+                print(f"      proposer: {ctx['proposer_why']}")
+            veto = ctx.get("veto") or {}
+            if veto.get("reason"):
+                print(f"      news analyst: {str(veto['reason'])[:160]}")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="alpaca")
     sub = parser.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("report")
     sub.add_parser("status")
     for name in ("rv", "preview"):
         p = sub.add_parser(name)
@@ -173,7 +222,9 @@ def main() -> None:
     memos_p.add_argument("--limit", type=int, default=30)
     args = parser.parse_args()
 
-    if args.cmd == "status":
+    if args.cmd == "report":
+        _report()
+    elif args.cmd == "status":
         asyncio.run(_status())
     elif args.cmd == "rv":
         asyncio.run(_rv(args.symbol.upper()))

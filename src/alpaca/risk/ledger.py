@@ -59,16 +59,17 @@ class Ledger:
 
     # ---- positions -----------------------------------------------------
 
-    def add(self, pos: Position) -> None:
+    def add(self, pos: Position, entry_context: Optional[dict] = None) -> None:
         self.db.conn.execute(
             "INSERT INTO trades (trade_id, sleeve, symbol, structure, status, qty, credit, "
-            "width, max_loss, legs_json, client_order_id, opened_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "width, max_loss, legs_json, client_order_id, opened_at, entry_context) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 pos.position_id, pos.sleeve, pos.underlying, pos.structure, pos.status,
                 pos.qty, pos.credit, pos.width, pos.max_loss,
                 json.dumps([asdict(leg) for leg in pos.legs]),
                 pos.client_order_id, pos.opened_at,
+                json.dumps(entry_context, default=str) if entry_context else None,
             ),
         )
         self.db.conn.commit()

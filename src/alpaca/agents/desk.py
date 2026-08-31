@@ -109,7 +109,7 @@ def parse_veto(raw: str) -> Optional[dict]:
     return {"veto": obj["veto"], "reason": str(obj.get("reason", ""))[:400]}
 
 
-async def _ask(system: str, user: str) -> Optional[str]:
+async def _ask(system: str, user: str, memo=None, role: str = "") -> Optional[str]:
     llm = get_llm()
     if llm is None:
         return None
@@ -119,7 +119,10 @@ async def _ask(system: str, user: str) -> Optional[str]:
     content = response.content
     if isinstance(content, list):
         content = " ".join(str(part) for part in content)
-    return str(content)
+    raw = str(content)
+    if memo is not None:
+        memo("llm_call", {"role": role, "input": user[:2000], "response": raw[:2000]})
+    return raw
 
 
 REGIME_SYSTEM = (
@@ -137,7 +140,7 @@ REGIME_SYSTEM = (
 
 async def regime_view(evidence: dict[str, Any], memo) -> RegimeView:
     try:
-        raw = await _ask(REGIME_SYSTEM, json.dumps(evidence, default=str))
+        raw = await _ask(REGIME_SYSTEM, json.dumps(evidence, default=str), memo, "regime_analyst")
         if raw is None:
             return RegimeView()
         parsed = parse_regime(raw)
@@ -158,20 +161,28 @@ PROPOSER_SYSTEM = (
 )
 
 
-async def choose_candidate(candidates: list[dict], regime_note: str, memo) -> int:
+async def choose_candidate(
+    candidates: list[dict], regime_note: str, memo
+) -> tuple[int, str]:
+    """Returns (index, stated reason). Defaults to the best credit-per-width."""
+    default_why = "default: best credit per unit of width"
     if len(candidates) <= 1:
-        return 0
+        return 0, default_why
     try:
         raw = await _ask(
             PROPOSER_SYSTEM,
             json.dumps({"regime_note": regime_note, "menu": candidates}, default=str),
+            memo, "proposer",
         )
         if raw is None:
-            return 0
-        return parse_choice(raw, len(candidates))
+            return 0, default_why
+        idx = parse_choice(raw, len(candidates))
+        obj = extract_json(raw) or {}
+        why = str(obj.get("why", ""))[:300] or default_why
+        return idx, why
     except Exception as exc:
         memo("proposer_error", {"error": repr(exc)[:300]})
-        return 0
+        return 0, default_why
 
 
 VETO_SYSTEM = (
@@ -205,7 +216,7 @@ async def news_veto(
             },
             default=str,
         )
-        raw = await _ask(VETO_SYSTEM, user)
+        raw = await _ask(VETO_SYSTEM, user, memo, "news_analyst")
         if raw is None:
             return False, "agent unavailable"
         parsed = parse_veto(raw)
@@ -227,7 +238,7 @@ JOURNALIST_SYSTEM = (
 
 async def journal_note(cycle_record: dict[str, Any], memo) -> Optional[str]:
     try:
-        raw = await _ask(JOURNALIST_SYSTEM, json.dumps(cycle_record, default=str))
+        raw = await _ask(JOURNALIST_SYSTEM, json.dumps(cycle_record, default=str), memo, "journalist")
         if raw is None:
             return None
         note = raw.strip()
