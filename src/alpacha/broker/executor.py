@@ -1,0 +1,224 @@
+"""Order lifecycle with the team's time-boxed ladder.
+
+Multi-leg limit convention: positive limit price = net debit, negative = net
+credit. Opening a condor posts a negative limit. The ladder: post at mid,
+concede improve_step at wait_seconds intervals up to max_improvements, never
+past the credit floor, then confirmed-cancel and walk away. No re-chasing
+within a cycle. Partial quantity fills are kept: every filled unit is a
+complete defined-risk condor. Leg risk cannot exist: mleg fills atomically.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Optional
+
+from ..config import EXEC, STRAT, now_et
+from ..risk.ledger import Position
+
+TERMINAL = {"filled", "canceled", "expired", "rejected", "done_for_day"}
+
+
+def ladder_prices(mid_credit: float, width: float) -> list[float]:
+    """Limit prices for an opening credit order, most aggressive first.
+
+    mid_credit is negative (credit). Each concession moves toward zero by
+    improve_step but never above the credit floor for the structure.
+    """
+    floor_credit = STRAT.min_credit_frac_condor * width
+    prices: list[float] = []
+    for i in range(EXEC.max_improvements + 1):
+        price = round(mid_credit + EXEC.improve_step * i, 2)
+        if -price < floor_credit - 1e-9:
+            break
+        prices.append(price)
+    return prices
+
+
+def open_legs(position: Position) -> list[dict]:
+    return [
+        {
+            "symbol": leg.symbol,
+            "ratio_qty": str(leg.ratio_qty),
+            "side": leg.side,
+            "position_intent": "sell_to_open" if leg.side == "sell" else "buy_to_open",
+        }
+        for leg in position.legs
+    ]
+
+
+def close_legs(position: Position) -> list[dict]:
+    return [
+        {
+            "symbol": leg.symbol,
+            "ratio_qty": str(leg.ratio_qty),
+            "side": "buy" if leg.side == "sell" else "sell",
+            "position_intent": "buy_to_close" if leg.side == "sell" else "sell_to_close",
+        }
+        for leg in position.legs
+    ]
+
+
+async def net_mid(mcp, position: Position, closing: bool) -> Optional[float]:
+    """Net structure price at current mids. Positive = debit to us."""
+    quotes = await mcp.option_quotes([leg.symbol for leg in position.legs])
+    total = 0.0
+    for leg in position.legs:
+        q = quotes.get(leg.symbol) or {}
+        bp, ap = float(q.get("bp") or 0.0), float(q.get("ap") or 0.0)
+        if bp <= 0 or ap <= 0:
+            return None
+        mid = (bp + ap) / 2.0
+        opening_sign = 1 if leg.side == "buy" else -1
+        sign = -opening_sign if closing else opening_sign
+        total += sign * mid * leg.ratio_qty
+    return total
+
+
+async def _await_terminal(mcp, client_order_id: str, timeout_s: int) -> tuple[str, Optional[dict]]:
+    waited = 0
+    step = max(EXEC.poll_seconds, 1)
+    order: Optional[dict] = None
+    while waited < timeout_s:
+        await asyncio.sleep(EXEC.poll_seconds)
+        waited += step
+        try:
+            order = await mcp.order_by_client_id(client_order_id)
+        except Exception:
+            continue
+        status = str(order.get("status", "")).lower()
+        if status in TERMINAL:
+            return status, order
+    return "working", order
+
+
+async def _confirmed_cancel(mcp, memo, order: Optional[dict], client_order_id: str) -> Optional[dict]:
+    """Cancel and verify. Returns the final order dict (may show a partial fill)."""
+    if not order:
+        try:
+            order = await mcp.order_by_client_id(client_order_id)
+        except Exception:
+            memo("cancel_lookup_failed", {"client_order_id": client_order_id})
+            return None
+    order_id = order.get("id")
+    if not order_id:
+        return order
+    try:
+        await mcp.cancel_order(order_id)
+    except Exception:
+        pass
+    for _ in range(6):
+        await asyncio.sleep(EXEC.poll_seconds)
+        try:
+            order = await mcp.order_by_client_id(client_order_id)
+        except Exception:
+            continue
+        if str(order.get("status", "")).lower() in TERMINAL:
+            return order
+    memo("cancel_unconfirmed", {"client_order_id": client_order_id})
+    return order
+
+
+def _filled_qty(order: Optional[dict]) -> int:
+    try:
+        return int(float(order.get("filled_qty") or 0)) if order else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+async def submit_open(mcp, memo, position: Position) -> bool:
+    mid = await net_mid(mcp, position, closing=False)
+    if mid is None or mid >= 0:
+        memo("open_abandoned", {"position": position.position_id, "reason": "no usable credit mid"})
+        position.status = "abandoned"
+        return False
+
+    prices = ladder_prices(mid, position.width)
+    if not prices:
+        memo("open_abandoned", {"position": position.position_id, "reason": "mid already below credit floor"})
+        position.status = "abandoned"
+        return False
+
+    for attempt, price in enumerate(prices):
+        coid = position.client_order_id if attempt == 0 else f"{position.client_order_id}-r{attempt}"
+        try:
+            await mcp.place_option_order(
+                qty=position.qty, legs=open_legs(position), limit_price=price, client_order_id=coid
+            )
+        except Exception as exc:
+            memo("open_rejected", {"position": position.position_id, "error": str(exc)[:400]})
+            position.status = "abandoned"
+            return False
+
+        status, order = await _await_terminal(mcp, coid, EXEC.wait_seconds)
+        if status == "filled":
+            fill = order.get("filled_avg_price") if order else None
+            if fill is not None:
+                position.credit = abs(float(fill))
+                position.max_loss = round((position.width - position.credit) * 100 * position.qty, 2)
+            position.status = "open"
+            position.client_order_id = coid
+            memo("opened", {"position": position.position_id, "price": price, "fill": fill})
+            return True
+
+        final = await _confirmed_cancel(mcp, memo, order, coid)
+        partial = _filled_qty(final)
+        if partial > 0:
+            fill = final.get("filled_avg_price") if final else None
+            position.qty = partial
+            if fill is not None:
+                position.credit = abs(float(fill))
+            position.max_loss = round((position.width - position.credit) * 100 * partial, 2)
+            position.status = "open"
+            position.client_order_id = coid
+            memo("opened_partial", {"position": position.position_id, "filled_qty": partial, "fill": fill})
+            return True
+        memo("open_requote", {"position": position.position_id, "attempt": attempt, "price": price})
+
+    memo("open_abandoned", {"position": position.position_id, "reason": "time box expired unfilled"})
+    position.status = "abandoned"
+    return False
+
+
+async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
+    mid = await net_mid(mcp, position, closing=True)
+    if mid is None:
+        memo("close_no_quotes", {"position": position.position_id})
+        return False
+    position.status = "closing"
+
+    steps = EXEC.max_improvements + EXEC.close_extra_steps + 1
+    for attempt in range(steps):
+        price = round(max(mid, 0.01) + EXEC.improve_step * attempt, 2)
+        coid = f"{position.position_id}-x{attempt}"
+        try:
+            await mcp.place_option_order(
+                qty=position.qty, legs=close_legs(position), limit_price=price, client_order_id=coid
+            )
+        except Exception as exc:
+            memo("close_rejected", {"position": position.position_id, "error": str(exc)[:400]})
+            return False
+
+        status, order = await _await_terminal(mcp, coid, EXEC.wait_seconds)
+        if status == "filled":
+            fill = order.get("filled_avg_price") if order else None
+            debit = abs(float(fill)) if fill is not None else price
+            position.status = "closed"
+            position.closed_at = now_et().isoformat()
+            position.close_order_id = coid
+            position.close_reason = reason
+            position.exit_debit = debit
+            position.realized_pnl = round((position.credit - debit) * 100 * position.qty, 2)
+            memo("closed", {
+                "position": position.position_id, "reason": reason,
+                "debit": debit, "realized_pnl": position.realized_pnl,
+            })
+            return True
+        await _confirmed_cancel(mcp, memo, order, coid)
+
+    memo("close_unfilled", {"position": position.position_id, "reason": reason})
+    return False
+
+
+async def cost_to_close(mcp, position: Position) -> Optional[float]:
+    return await net_mid(mcp, position, closing=True)

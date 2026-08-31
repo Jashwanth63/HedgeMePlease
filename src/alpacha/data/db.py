@@ -1,0 +1,151 @@
+"""SQLite persistence: trades, forecasts, daily RV, risk snapshots, app state,
+and the memos audit trail. One file, WAL mode, judge-readable with any client.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+from pathlib import Path
+from typing import Any, Optional
+
+from ..config import DB_PATH, STATE_DIR, now_et
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS trades (
+    trade_id TEXT PRIMARY KEY,
+    sleeve TEXT NOT NULL DEFAULT 'A',
+    symbol TEXT NOT NULL,
+    structure TEXT NOT NULL,
+    status TEXT NOT NULL,
+    qty INTEGER NOT NULL,
+    credit REAL NOT NULL,
+    width REAL NOT NULL,
+    max_loss REAL NOT NULL,
+    legs_json TEXT NOT NULL,
+    client_order_id TEXT NOT NULL,
+    opened_at TEXT NOT NULL,
+    closed_at TEXT,
+    close_order_id TEXT,
+    exit_debit REAL,
+    realized_pnl REAL,
+    close_reason TEXT
+);
+CREATE TABLE IF NOT EXISTS forecasts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    horizon INTEGER NOT NULL,
+    rv_forecast REAL NOT NULL,
+    method TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS rv_daily (
+    symbol TEXT NOT NULL,
+    day TEXT NOT NULL,
+    rv REAL NOT NULL,
+    bv REAL NOT NULL,
+    jump REAL NOT NULL,
+    ret REAL NOT NULL,
+    PRIMARY KEY (symbol, day)
+);
+CREATE TABLE IF NOT EXISTS risk_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    equity REAL NOT NULL,
+    peak REAL NOT NULL,
+    drawdown REAL NOT NULL,
+    action TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS app_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS memos (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts TEXT NOT NULL,
+    event TEXT NOT NULL,
+    detail_json TEXT NOT NULL
+);
+"""
+
+
+class Db:
+    def __init__(self, path: Optional[Path] = None) -> None:
+        self.path = path or DB_PATH
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.path, check_same_thread=False)
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.executescript(_SCHEMA)
+        self.conn.commit()
+
+    def close(self) -> None:
+        self.conn.close()
+
+    # ---- audit trail ---------------------------------------------------
+
+    def memo(self, event: str, detail: dict[str, Any]) -> None:
+        self.conn.execute(
+            "INSERT INTO memos (ts, event, detail_json) VALUES (?, ?, ?)",
+            (now_et().isoformat(), event, json.dumps(detail, default=str)),
+        )
+        self.conn.commit()
+
+    def recent_memos(self, limit: int = 50) -> list[dict]:
+        rows = self.conn.execute(
+            "SELECT ts, event, detail_json FROM memos ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [
+            {"ts": r["ts"], "event": r["event"], **json.loads(r["detail_json"])}
+            for r in rows
+        ]
+
+    # ---- app state -----------------------------------------------------
+
+    def get_state(self, key: str, default: Any = None) -> Any:
+        row = self.conn.execute("SELECT value FROM app_state WHERE key = ?", (key,)).fetchone()
+        return json.loads(row["value"]) if row else default
+
+    def set_state(self, key: str, value: Any) -> None:
+        self.conn.execute(
+            "INSERT INTO app_state (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, json.dumps(value)),
+        )
+        self.conn.commit()
+
+    # ---- model tables --------------------------------------------------
+
+    def upsert_rv_daily(self, symbol: str, rows: list) -> None:
+        self.conn.executemany(
+            "INSERT INTO rv_daily (symbol, day, rv, bv, jump, ret) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(symbol, day) DO UPDATE SET rv=excluded.rv, bv=excluded.bv, "
+            "jump=excluded.jump, ret=excluded.ret",
+            [(symbol, s.day, s.rv, s.bv, s.jump, s.ret) for s in rows],
+        )
+        self.conn.commit()
+
+    def record_forecast(self, symbol: str, horizon: int, value: float, method: str) -> None:
+        self.conn.execute(
+            "INSERT INTO forecasts (ts, symbol, horizon, rv_forecast, method) VALUES (?, ?, ?, ?, ?)",
+            (now_et().isoformat(), symbol, horizon, value, method),
+        )
+        self.conn.commit()
+
+    def forecast_vs_realized(self, symbol: str, limit: int = 6) -> list[tuple[float, float]]:
+        """Recent (forecast, next-day realized) pairs for the demotion rule."""
+        rows = self.conn.execute(
+            "SELECT f.rv_forecast AS f, r.rv AS r FROM forecasts f "
+            "JOIN rv_daily r ON r.symbol = f.symbol AND r.day > substr(f.ts, 1, 10) "
+            "WHERE f.symbol = ? AND f.method = 'har' "
+            "GROUP BY f.id HAVING r.day = MIN(r.day) ORDER BY f.id DESC LIMIT ?",
+            (symbol, limit),
+        ).fetchall()
+        return [(row["f"], row["r"]) for row in reversed(rows)]
+
+    def record_risk_snapshot(self, equity: float, peak: float, drawdown: float, action: str) -> None:
+        self.conn.execute(
+            "INSERT INTO risk_snapshots (ts, equity, peak, drawdown, action) VALUES (?, ?, ?, ?, ?)",
+            (now_et().isoformat(), equity, peak, drawdown, action),
+        )
+        self.conn.commit()

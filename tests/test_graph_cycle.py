@@ -1,0 +1,95 @@
+"""Full offline cycle: the entire LangGraph pipeline runs against the fake
+broker with synthetic data, no network and no keys. The dry run must walk
+risk check, manage, gather, regime, gates, build, propose, veto, risk gate,
+and reach a dry-run execution, journaling everything to SQLite.
+"""
+
+import asyncio
+
+import alpacha.graph as graph_mod
+from alpacha.data.db import Db
+from alpacha.graph import Services, run_cycle
+from alpacha.risk.ledger import Ledger
+
+from conftest import FIXED_NOW, FakeBroker
+
+
+def make_services(tmp_path, broker=None, dry_run=True) -> Services:
+    db = Db(tmp_path / "cycle.db")
+    return Services(broker=broker or FakeBroker(), db=db, ledger=Ledger(db), dry_run=dry_run)
+
+
+def run(services):
+    return asyncio.run(run_cycle(services))
+
+
+def test_full_dry_cycle_reaches_execution(tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_mod, "now_et", lambda: FIXED_NOW)
+    services = make_services(tmp_path)
+    result = run(services)
+
+    assert result.get("action") == "ok"
+    assert result.get("passing"), f"gates failed: {result.get('gates')}"
+    assert result.get("executed", {}).get("dry_run") is True
+    events = [m["event"] for m in services.db.recent_memos(100)]
+    for expected in ("cycle_start", "gates", "candidates", "proposal_chosen",
+                     "news_veto", "risk_verdict", "dry_run_would_open", "cycle_end"):
+        assert expected in events, f"missing {expected} in {events}"
+
+
+def test_kill_switch_path_halts_and_flattens(tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_mod, "now_et", lambda: FIXED_NOW)
+    services = make_services(tmp_path, broker=FakeBroker(equity=96_000.0))
+    services.ledger.update_equity(100_000.0)  # establish the peak first
+    result = run(services)
+
+    assert result.get("skip") == "kill switch"
+    assert services.ledger.halted
+    events = [m["event"] for m in services.db.recent_memos(50)]
+    assert "KILL_SWITCH" in events
+
+
+def test_market_closed_skips_entries(tmp_path, monkeypatch):
+    monkeypatch.setattr(graph_mod, "now_et", lambda: FIXED_NOW)
+    services = make_services(tmp_path, broker=FakeBroker(is_open=False))
+    result = run(services)
+    assert result.get("skip") == "market closed"
+    assert "executed" not in result
+
+
+def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
+    import alpacha.broker.executor as executor
+    from alpacha.config import ExecutorConfig
+
+    monkeypatch.setattr(graph_mod, "now_et", lambda: FIXED_NOW)
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+
+    class FillingFakeBroker(FakeBroker):
+        async def place_option_order(self, qty, legs, limit_price, client_order_id):
+            order = {
+                "id": f"ord-{len(self.placed_orders)}",
+                "client_order_id": client_order_id,
+                "status": "filled",
+                "filled_qty": str(qty),
+                "filled_avg_price": limit_price,
+                "limit_price": limit_price,
+                "legs": legs,
+            }
+            self.placed_orders.append(order)
+            return order
+
+    broker = FillingFakeBroker()
+    services = make_services(tmp_path, broker=broker, dry_run=False)
+    result = run(services)
+
+    assert result.get("executed", {}).get("opened") is True
+    assert broker.placed_orders, "no order reached the broker"
+    order = broker.placed_orders[0]
+    assert len(order["legs"]) == 4
+    assert float(order["limit_price"]) < 0, "opening condor must be a net credit"
+    open_pos = services.ledger.open_positions()
+    assert len(open_pos) == 1
+    assert open_pos[0].status == "open"
