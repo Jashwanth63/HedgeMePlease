@@ -1,24 +1,20 @@
 # Alpaca Iron Condor Options Trading Bot — Implementation Plan
 
 ## TL;DR
-A long-running Python daemon on the Alpaca platform (paper first, live later). It monitors account risk with a **3.5% drawdown kill switch**, fetches **SPY/QQQ 1-minute bars**, forecasts **1-day realized volatility (RV)** with an **enhanced HAR model** (leverage + jumps), gates every entry on **macro events / vol contango / IV ≥ 1.2×RV edge**, and places **Iron Condor limit orders** (short 0.20 delta, wings sized by expected move). All state persists to **SQLite**.
+An autonomous **LangGraph Agent State Machine** on the Alpaca platform (paper first, live later) interacting via **Alpaca MCP Tools & Direct CLI/REST**. It monitors account risk with a **3.5% drawdown kill switch**, fetches **SPY/QQQ 1-minute bars**, forecasts **1-day realized volatility (RV)** with an **enhanced HAR model** (leverage + jumps), gates every entry on **macro events / vol contango / IV ≥ 1.2×RV edge**, and places **Iron Condor limit orders** (short 0.20 delta, wings sized by expected move). All state persists to **SQLite**.
 
 ---
 
 ## 1. Scope & Goals
 
 ### In Scope
-- **Instruments**: SPY and QQQ options
-- **Strategy**: Iron Condor (IC) — four-leg defined-risk credit strategy
-- **Execution**: Long-running daemon on Alpaca via `alpaca-py` (paper trading first, live after validation)
-- **Model**: Enhanced HAR volatility model (Corsi 2009 + leverage effect + jump component)
-- **Risk**: Dynamic account equity peak tracking, drawdown warning ladder, and 3.5% hard kill switch
-- **Persistence**: SQLite (single-file, transactional, zero-config)
-
-### Out of Scope (v1)
-- Additional tickers beyond SPY and QQQ
-- Multi-leg strategies other than Iron Condors (e.g., butterflies, calendars, strangles)
-- High-frequency intraday execution / dynamic tick-by-tick rehedging
+- **Agent Architecture**: LangGraph State Machine (`TradingAgentState`) coordinating modular agent nodes.
+- **MCP & CLI Interface**: Alpaca Model Context Protocol (MCP) tool suite (`FastMCP`) & direct HTTP CLI engine (zero dependency on high-level broker SDKs).
+- **Instruments**: SPY and QQQ options.
+- **Strategy**: Iron Condor (IC) — four-leg defined-risk credit strategy.
+- **Model**: Enhanced HAR volatility model (Corsi 2009 + leverage effect + jump component).
+- **Risk**: Dynamic account equity peak tracking, drawdown warning ladder, and 3.5% hard kill switch.
+- **Persistence**: SQLite (single-file, transactional, zero-config).
 
 ---
 
@@ -26,15 +22,16 @@ A long-running Python daemon on the Alpaca platform (paper first, live later). I
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| **Language** | Python 3.11+ | High readability, rich ecosystem for financial modeling & stats |
-| **Broker SDK** | `alpaca-py` | Official SDK with native support for options trading & data feeds |
-| **Execution Architecture** | Long-running daemon with APScheduler | Cyclic, automated execution loop for risk/scan/trade tasks |
+| **Agent Engine** | LangGraph State Machine (`StateGraph`) | Stateful, auditable multi-node agent pipeline designed for hackathon Agent frameworks |
+| **Broker Interface** | Alpaca MCP Server + Direct REST CLI Driver | Fully compliant with MCP standards; zero proprietary broker SDK reliance in the strategy loop |
+| **Language** | Python 3.11+ | Rich ecosystem for financial modeling, stats, and agent graphs |
 | **Volatility Model** | Enhanced HAR (Corsi 2009 + leverage + jumps) via `statsmodels` OLS | Robust daily RV forecast incorporating asymmetric return shocks & jumps |
 | **Wing Width Calculation** | Derived from Expected Move: `IV × √(DTE/365) × price` | Dynamic, model-consistent wing distance scaled to current market implied risk |
 | **Storage Engine** | SQLite | Lightweight, single-file, transactional persistence for state and audit logs |
 | **Vol Contango Gate** | Near vs. next SPY expiration ATM IV comparison | Ensures favorable options term structure before entering credit trades |
 | **Macro Event Filtering** | Static JSON calendar (initial) with optional API fallback | Low overhead, reliable offline check for major market-moving events |
 | **Risk Kill Switch** | 3.5% drawdown from peak equity → liquidate + halt | Enforces strictly capped portfolio risk |
+
 
 ---
 

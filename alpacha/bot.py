@@ -17,7 +17,9 @@ import pandas as pd
 from apscheduler.schedulers.blocking import BlockingScheduler
 from apscheduler.triggers.cron import CronTrigger
 
+from alpacha.agent.state_machine import TradingStateMachineBuilder
 from alpacha.alerts.notifier import Notifier
+from alpacha.cli.driver import AlpacaCLIDriver
 from alpacha.config import Settings
 from alpacha.data.alpaca_data import AlpacaDataClient
 from alpacha.data.macro_calendar import MacroCalendar
@@ -42,54 +44,51 @@ class AlpachaBot:
         # Initialize subsystems
         self.db = SQLiteManager(settings.app.db_path)
         self.macro_calendar = MacroCalendar(settings.app.macro_calendar_path)
-        self.alpaca_client = AlpacaDataClient(settings)
+        self.cli_driver = AlpacaCLIDriver(settings)
         self.trainer = ModelTrainer(settings, self.db)
         self.risk_manager = RiskManager(settings, self.db)
         self.gate_manager = StrategyGateManager(settings, self.macro_calendar)
         self.ic_builder = IronCondorBuilder(settings)
-        self.executor = OrderExecutor(settings, self.alpaca_client, self.db)
         self.notifier = Notifier(settings)
 
+        # Build LangGraph Agent State Machine
+        self.agent_builder = TradingStateMachineBuilder(settings, self.db)
+        self.agent_graph = self.agent_builder.build_graph()
+
         self.scheduler = BlockingScheduler()
-        logger.info(f"Initialized {settings.app.name} (Paper={settings.app.paper}, DryRun={settings.app.dry_run})")
+        logger.info(f"Initialized {settings.app.name} Agent (Paper={settings.app.paper}, DryRun={settings.app.dry_run})")
 
     def run_cycle(self) -> None:
-        """Single execution cycle of the risk, forecasting, and trading pipeline."""
-        logger.info("=== Starting Execution Cycle ===")
+        """Executes a complete cycle via the LangGraph State Machine."""
+        logger.info("=== Starting LangGraph Agent Execution Cycle ===")
 
         if self.settings.execution.trading_hours_only and not is_market_open():
             logger.info("Market is currently closed. Skipping trading scan.")
             return
 
         if self.is_halted:
-            logger.critical("Bot is in HALTED state due to Kill Switch breach. No operations performed.")
+            logger.critical("Agent is in HALTED state due to Kill Switch breach. No operations performed.")
             return
 
-        # 2. Risk Management Evaluation
-        current_equity = self.alpaca_client.get_account_equity()
-        available_bp = self.alpaca_client.get_buying_power()
-        risk_status = self.risk_manager.evaluate_risk(current_equity)
+        init_state = {
+            "symbols": self.settings.data.symbols,
+            "step_history": [],
+            "is_market_open": is_market_open(),
+        }
 
-        if risk_status.should_liquidate:
-            self.is_halted = True
-            self.notifier.notify_kill_switch_triggered(risk_status.drawdown_pct, current_equity)
-            logger.critical("LIQUIDATING ALL POSITIONS DUE TO 3.5% DRAWDOWN BREACH!")
-            self.alpaca_client.close_all_positions()
-            return
+        try:
+            result = self.agent_graph.invoke(init_state)
+            logger.info(f"LangGraph Agent Completed Steps: {result.get('step_history')}")
+            if result.get("is_halted"):
+                self.is_halted = True
+                self.notifier.notify_kill_switch_triggered(result.get("drawdown_pct", 0.0), result.get("current_equity", 0.0))
+            elif result.get("risk_level") == "WARNING":
+                self.notifier.notify_drawdown_warning(result.get("drawdown_pct", 0.0), result.get("current_equity", 0.0))
+        except Exception as e:
+            logger.error(f"Error in LangGraph Agent execution: {e}", exc_info=True)
 
-        if risk_status.risk_level == RiskLevel.WARNING:
-            self.notifier.notify_drawdown_warning(risk_status.drawdown_pct, current_equity)
-            logger.warning("Risk Warning active. Skipping new trade entries.")
-            return
+        logger.info("=== Finished LangGraph Agent Execution Cycle ===")
 
-        # 3. Strategy Pipeline for each configured symbol (SPY, QQQ)
-        for symbol in self.settings.data.symbols:
-            try:
-                self._process_symbol(symbol, current_equity, available_bp)
-            except Exception as e:
-                logger.error(f"Error processing symbol {symbol}: {e}", exc_info=True)
-
-        logger.info("=== Finished Execution Cycle ===")
 
     def _process_symbol(self, symbol: str, current_equity: float, available_bp: float) -> None:
         """Processes market data, forecasting, gates, and order placement for a single symbol."""

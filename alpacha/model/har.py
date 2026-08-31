@@ -83,7 +83,7 @@ class EnhancedHARModel:
         """
         Fits the Enhanced HAR model via OLS regression.
         """
-        min_required = max(self.monthly_lags + 10, 30)
+        min_required = max(self.monthly_lags + 2, 20)
         if len(daily_df) < min_required:
             raise ValueError(f"Insufficient observations for HAR model. Required >= {min_required}, got {len(daily_df)}")
 

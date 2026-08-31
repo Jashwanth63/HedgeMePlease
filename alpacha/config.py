@@ -41,7 +41,7 @@ class ModelConfig:
     jump_alpha: float = 0.01
     iv_vs_rv_multiple: float = 1.2
     retrain_if_older_days: int = 5
-    min_train_days: int = 30
+    min_train_days: int = 20
 
 
 @dataclass

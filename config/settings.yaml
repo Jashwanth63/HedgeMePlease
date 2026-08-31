@@ -22,7 +22,7 @@ model:
   jump_alpha: 0.01
   iv_vs_rv_multiple: 1.2
   retrain_if_older_days: 5
-  min_train_days: 30
+  min_train_days: 20
 
 risk:
   warn_drawdown_pct: 0.02       # 2.0% warning threshold (reduce sizing & block entries)
