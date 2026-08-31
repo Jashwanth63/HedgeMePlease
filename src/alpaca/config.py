@@ -74,7 +74,8 @@ class StrategyConfig:
 class ExecutorConfig:
     """Time-boxed limit ladder agreed with the team."""
     improve_step: float = 0.02             # concession per requote, dollars
-    max_improvements: int = 2
+    max_improvements: int = 4              # calibrated live Aug 31: mid plus four
+                                           # cents rested unfilled on the paper engine
     wait_seconds: int = 40                 # per price level
     poll_seconds: int = 5
     close_extra_steps: int = 2             # closes may pay up a little further

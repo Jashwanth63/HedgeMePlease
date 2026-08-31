@@ -41,7 +41,8 @@ def test_net_mid_refuses_fat_ask_over_zero_bid():
 def test_ladder_prices_concede_toward_zero():
     prices = ladder_prices(-1.20, width=5.0)
     assert prices[0] == -1.20
-    assert prices == sorted(prices)  # -1.20, -1.18, -1.16
+    assert len(prices) == executor.EXEC.max_improvements + 1
+    assert prices == sorted(prices)
     assert all(-p >= 5.0 * 0.12 for p in prices)
 
 
