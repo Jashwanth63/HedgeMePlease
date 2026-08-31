@@ -33,10 +33,10 @@ risk:
 
 strategy:
   target_delta: 0.20
-  delta_tolerance: 0.05
-  min_dte: 21
+  delta_tolerance: 0.08
+  min_dte: 0
   max_dte: 45
-  target_dte: 30
+  target_dte: 2
   macro_buffer_hours: 2.0
   min_credit: 0.20              # Minimum credit in $ per spread
   profit_target_pct: 0.50       # Exit at 50% max profit

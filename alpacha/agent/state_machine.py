@@ -195,21 +195,30 @@ class TradingStateMachineBuilder:
         errors = []
 
         for sym, condor_dict in built_condors.items():
-            contracts = sized_contracts.get(sym, 1)
+            contracts = min(1, sized_contracts.get(sym, 1))
             trade_id = condor_dict["trade_id"]
 
             try:
                 if not self.settings.app.dry_run:
-                    for leg in condor_dict["legs"]:
-                        side = "buy" if leg["action"] == "BUY" else "sell"
-                        limit_price = round(leg["mid"], 2)
-                        self.cli_driver.submit_order(
-                            symbol=leg["symbol"],
-                            qty=contracts,
-                            side=side,
-                            order_type="limit",
-                            limit_price=limit_price,
-                        )
+                    # Construct native multi-leg (mleg) Iron Condor order for Alpaca Level 3 Options
+                    mleg_legs = [
+                        {
+                            "symbol": leg["symbol"],
+                            "ratio_qty": "1",
+                            "side": "buy" if leg["action"] == "BUY" else "sell",
+                        }
+                        for leg in condor_dict["legs"]
+                    ]
+                    payload = {
+                        "order_class": "mleg",
+                        "qty": str(contracts),
+                        "type": "limit",
+                        "time_in_force": "day",
+                        "limit_price": str(max(0.05, round(condor_dict.get("net_credit_per_share", 0.50), 2))),
+                        "legs": mleg_legs,
+                    }
+                    self.cli_driver._request("POST", "v2/orders", data=payload)
+                    logger.info(f"Successfully submitted Multi-Leg Iron Condor {trade_id} to Alpaca!")
                 else:
                     logger.info(f"[DRY RUN] Simulating fill for trade {trade_id} ({sym} x {contracts})")
 
@@ -236,11 +245,88 @@ class TradingStateMachineBuilder:
 
     def _format_chain(self, symbol: str, spot: float, vol: float) -> List[Dict[str, Any]]:
         from scipy.stats import norm
+        import math
+
         chain_list = []
+        vol_clean = max(0.08, vol)
+        today = datetime.now(timezone.utc).date()
+
+        # Attempt to query live option contracts from Alpaca
+        live_contracts = []
+        if self.cli_driver.is_connected:
+            try:
+                today_str = today.strftime("%Y-%m-%d")
+                calls_res = self.cli_driver._request(
+                    "GET",
+                    "v2/options/contracts",
+                    params={
+                        "underlying_symbols": symbol,
+                        "type": "call",
+                        "expiration_date_gte": today_str,
+                        "limit": 500,
+                    },
+                )
+                puts_res = self.cli_driver._request(
+                    "GET",
+                    "v2/options/contracts",
+                    params={
+                        "underlying_symbols": symbol,
+                        "type": "put",
+                        "expiration_date_gte": today_str,
+                        "limit": 500,
+                    },
+                )
+                live_contracts = calls_res.get("option_contracts", []) + puts_res.get("option_contracts", [])
+            except Exception as e:
+                logger.warning(f"Could not query live option contracts for {symbol}: {e}")
+
+
+        if live_contracts:
+            # Find best expiration
+            expirations = sorted(list(set(c["expiration_date"] for c in live_contracts if c.get("expiration_date"))))
+            target_dte = self.settings.strategy.target_dte
+            best_exp = min(
+                expirations,
+                key=lambda exp: abs((datetime.fromisoformat(exp).date() - today).days - target_dte)
+            )
+            actual_dte = max(1, (datetime.fromisoformat(best_exp).date() - today).days)
+            t_years = max(0.003, actual_dte / 365.0)
+
+            exp_contracts = [c for c in live_contracts if c.get("expiration_date") == best_exp]
+            for c in exp_contracts:
+                strike = float(c["strike_price"])
+                opt_type = c["type"].upper()
+
+                d1 = (math.log(spot / strike) + 0.5 * (vol_clean ** 2) * t_years) / (vol_clean * math.sqrt(t_years))
+                d2 = d1 - vol_clean * math.sqrt(t_years)
+
+                call_delta = float(norm.cdf(d1))
+                put_delta = float(call_delta - 1.0)
+                delta = call_delta if opt_type == "CALL" else put_delta
+
+                if opt_type == "CALL":
+                    price = max(0.10, round(spot * norm.cdf(d1) - strike * math.exp(-0.04 * t_years) * norm.cdf(d2), 2))
+                else:
+                    price = max(0.10, round(strike * math.exp(-0.04 * t_years) * norm.cdf(-d2) - spot * norm.cdf(-d1), 2))
+
+                chain_list.append({
+                    "symbol": c["symbol"],
+                    "option_type": opt_type,
+                    "strike": strike,
+                    "expiration": best_exp,
+                    "dte": actual_dte,
+                    "delta": delta,
+                    "bid": max(0.05, price - 0.05),
+                    "ask": price + 0.05,
+                    "price": price,
+                })
+            return chain_list
+
+        # Fallback for offline / synthetic testing
         target_dte = self.settings.strategy.target_dte
         t_years = max(0.01, target_dte / 365.0)
-        exp_date = (datetime.now().date() + timedelta(days=target_dte)).strftime("%Y-%m-%d")
-        vol_clean = max(0.08, vol)
+        exp_date = (today + timedelta(days=target_dte)).strftime("%Y-%m-%d")
+        yy, mm, dd = exp_date[2:4], exp_date[5:7], exp_date[8:10]
 
         for strike_offset in range(-60, 61, 2):
             strike = round(spot + strike_offset, 2)
@@ -255,8 +341,9 @@ class TradingStateMachineBuilder:
             call_price = max(0.10, round(spot * norm.cdf(d1) - strike * math.exp(-0.04 * t_years) * norm.cdf(d2), 2))
             put_price = max(0.10, round(strike * math.exp(-0.04 * t_years) * norm.cdf(-d2) - spot * norm.cdf(-d1), 2))
 
+            strike_int = int(round(strike * 1000))
             chain_list.append({
-                "symbol": f"{symbol}_{exp_date}_{int(strike*1000)}_P",
+                "symbol": f"{symbol.upper()}{yy}{mm}{dd}P{strike_int:08d}",
                 "option_type": "PUT",
                 "strike": strike,
                 "expiration": exp_date,
@@ -267,7 +354,7 @@ class TradingStateMachineBuilder:
                 "price": put_price,
             })
             chain_list.append({
-                "symbol": f"{symbol}_{exp_date}_{int(strike*1000)}_C",
+                "symbol": f"{symbol.upper()}{yy}{mm}{dd}C{strike_int:08d}",
                 "option_type": "CALL",
                 "strike": strike,
                 "expiration": exp_date,
@@ -279,6 +366,7 @@ class TradingStateMachineBuilder:
             })
 
         return chain_list
+
 
     def build_graph(self):
         """Constructs and compiles the LangGraph State Machine."""

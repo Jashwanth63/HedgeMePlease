@@ -56,10 +56,10 @@ class RiskConfig:
 @dataclass
 class StrategyConfig:
     target_delta: float = 0.20
-    delta_tolerance: float = 0.05
-    min_dte: int = 21
+    delta_tolerance: float = 0.08
+    min_dte: int = 0
     max_dte: int = 45
-    target_dte: int = 30
+    target_dte: int = 2
     macro_buffer_hours: float = 2.0
     min_credit: float = 0.20
     profit_target_pct: float = 0.50
