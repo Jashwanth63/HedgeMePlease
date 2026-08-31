@@ -44,14 +44,15 @@ def test_tlt_builds_with_narrow_wings():
     assert p.qty >= 1
 
 
-def test_cluster_budget_blocks_third_equity_but_allows_rates():
+def test_cluster_budget_blocks_overfull_equity_but_allows_rates():
     fillers = []
-    for _ in range(2):
+    for i in range(3):
         q = spy_proposal()
         q.position.max_loss = 380.0
         q.position.status = "open"
+        q.position.underlying = "SPY" if i < 2 else "QQQ"
         fillers.append(q.position)
-    # equity cluster now holds 760 of its 750 cap with the next equity trade
+    # equity cluster holds 1140 of its 1210 cap; the next 380 breaches it
     equity_verdict = check(fillers, spy_proposal())
     assert not equity_verdict.approved
     assert any("equity cluster budget" in r for r in equity_verdict.reasons)

@@ -98,8 +98,8 @@ Agents can **subtract risk or add context — never add risk**. No agent can loo
 | Daily ladder | −1.0% no new trades · −1.5% reduce only |
 | De-risk sizing ladder | 50% of kill budget spent → half size · 75% → no entries |
 | Per position max loss | $500 target, $1,000 hard cap |
-| Whole book stress grid (spot ±5% × vol shocked up) | worst cell ≥ −$2,500 |
-| Concentration | ≤6 positions, ≤2 per underlying, sleeve budget $1,500 |
+| Whole book stress grid (spot ±5% × vol shocked up) | worst cell ≥ −$3,000 |
+| Concentration | ≤15 positions, ≤3 per underlying per sleeve, Sleeve A budget $2,200, correlation-cluster caps |
 | Naked options | banned — structurally impossible (atomic 4-leg orders only) |
 | Contest end | flat by Thu 15:30 ET; the mark is Thursday EOD |
 

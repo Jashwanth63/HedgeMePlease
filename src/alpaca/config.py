@@ -34,10 +34,10 @@ class RiskLimits:
     daily_reduce_only_dd: float = 0.015    # reduce-only for the day
     per_trade_max_loss: float = 1_000.0    # hard cap on (width - credit) * 100 * qty
     per_trade_pref_loss: float = 500.0     # sizing target
-    book_worst_case: float = 2_500.0       # stress-grid worst cell across whole book
-    sleeve_budget: float = 1_500.0         # sum of open max losses
-    max_positions: int = 6
-    max_positions_per_underlying: int = 2
+    book_worst_case: float = 3_000.0       # stress-grid worst cell across whole book
+    sleeve_budget: float = 2_200.0         # sum of open max losses (sleeve A)
+    max_positions: int = 15
+    max_positions_per_underlying: int = 3
     max_net_delta_dollars: float = 25_000.0
     min_net_vega: float = -200.0
     min_entry_dte: int = 2
@@ -55,7 +55,7 @@ class StrategyConfig:
         "SPY": "equity", "QQQ": "equity", "GLD": "metals", "TLT": "rates",
         "DELL": "single_name", "AVGO": "single_name",
     })
-    cluster_budget_frac: float = 0.5       # max share of the A sleeve budget per cluster
+    cluster_budget_frac: float = 0.55      # max share of the A sleeve budget per cluster
     cluster_delta_caps: dict[str, float] = field(default_factory=lambda: {
         "equity": 25_000.0, "metals": 10_000.0, "rates": 10_000.0,
         "single_name": 10_000.0,

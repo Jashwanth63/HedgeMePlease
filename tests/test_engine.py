@@ -33,7 +33,7 @@ def test_per_trade_cap_rejects():
 
 def test_sleeve_budget_rejects():
     fillers = []
-    for _ in range(3):
+    for _ in range(5):
         q = make_proposal()
         q.position.max_loss = 500.0
         q.position.status = "open"
@@ -43,9 +43,9 @@ def test_sleeve_budget_rejects():
 
 
 def test_underlying_concentration_rejects():
-    a, b = make_proposal(), make_proposal()
-    a.position.status = b.position.status = "open"
-    verdict = check([a.position, b.position], make_proposal())
+    a, b, c = make_proposal(), make_proposal(), make_proposal()
+    a.position.status = b.position.status = c.position.status = "open"
+    verdict = check([a.position, b.position, c.position], make_proposal())
     assert not verdict.approved
     assert any("already has" in r for r in verdict.reasons)
 
