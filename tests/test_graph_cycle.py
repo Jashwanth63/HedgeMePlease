@@ -100,4 +100,10 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
     assert stored["entry_context"], "entry context must be stored with the fill"
 
     second = run(services)
-    assert str(second.get("skip", "")).startswith("entry cooldown"), second.get("skip")
+    assert str(second.get("skip", "")).startswith("entry spacing"), second.get("skip")
+
+    services.db.set_state("last_entry_at", "2026-08-31T09:00:00-04:00")  # spacing elapsed
+    third = run(services)
+    gates = third.get("gates") or {}
+    spy_fails = (gates.get("SPY") or {}).get("failed", [])
+    assert any("underlying_cooldown" in f for f in spy_fails), gates

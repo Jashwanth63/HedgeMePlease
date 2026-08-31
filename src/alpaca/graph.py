@@ -162,14 +162,21 @@ def build_graph(services: Services, checkpointer=None):
             return {"skip": f"account {state.get('action')}"}
         if now >= FLATTEN_AT:
             return {"skip": "past contest flatten time"}
+        entries_today = services.db.conn.execute(
+            "SELECT COUNT(*) AS n FROM trades WHERE substr(opened_at, 1, 10) = ? "
+            "AND status != 'abandoned'",
+            (now.date().isoformat(),),
+        ).fetchone()["n"]
+        if entries_today >= STRAT.max_entries_per_day:
+            return {"skip": f"daily entry cap {STRAT.max_entries_per_day} reached"}
         last_entry = services.db.get_state("last_entry_at")
         if last_entry:
             from datetime import datetime as _dt
 
             elapsed_min = (now - _dt.fromisoformat(last_entry)).total_seconds() / 60.0
-            if elapsed_min < STRAT.entry_cooldown_min:
-                remaining = STRAT.entry_cooldown_min - elapsed_min
-                return {"skip": f"entry cooldown, {remaining:.0f}m remaining"}
+            if elapsed_min < STRAT.global_entry_spacing_min:
+                remaining = STRAT.global_entry_spacing_min - elapsed_min
+                return {"skip": f"entry spacing, {remaining:.0f}m remaining"}
         return {}
 
     async def gather(state: CycleState) -> CycleState:
@@ -236,10 +243,18 @@ def build_graph(services: Services, checkpointer=None):
         for und, ev in (state.get("evidence") or {}).items():
             report = evaluate_gates(ev.get("near_iv"), ev.get("far_iv"), ev.get("rv_forecast"), now, edge_ratio)
             standdown = regime_view.get("stance") == "standdown"
-            ok = report.all_pass and not standdown
+            extra_fails = ["regime_standdown"] if standdown else []
+            last_und_entry = services.db.get_state(f"last_entry_at:{und}")
+            if last_und_entry:
+                from datetime import datetime as _dt
+
+                elapsed = (now - _dt.fromisoformat(last_und_entry)).total_seconds() / 60.0
+                if elapsed < STRAT.same_underlying_cooldown_min:
+                    extra_fails.append(f"underlying_cooldown_{STRAT.same_underlying_cooldown_min - elapsed:.0f}m")
+            ok = report.all_pass and not extra_fails
             gates_out[und] = {
                 "pass": ok,
-                "failed": report.failed() + (["regime_standdown"] if standdown else []),
+                "failed": report.failed() + extra_fails,
                 **report.details,
             }
             memo("gates", {"underlying": und, **gates_out[und]})
@@ -358,7 +373,9 @@ def build_graph(services: Services, checkpointer=None):
         opened = await submit_open(services.broker, memo, target.position)
         if opened:
             ledger.add(target.position, entry_context)
-            services.db.set_state("last_entry_at", now_et().isoformat())
+            stamp = now_et().isoformat()
+            services.db.set_state("last_entry_at", stamp)
+            services.db.set_state(f"last_entry_at:{target.underlying}", stamp)
         return {"executed": {"opened": opened, **target.summary()}}
 
     async def journal(state: CycleState) -> CycleState:

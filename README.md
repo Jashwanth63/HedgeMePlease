@@ -107,7 +107,7 @@ The stress grid revalues every leg under crossed spot and vol shocks with an in-
 
 ## Execution discipline
 
-Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-credit mid, concede two cents at 40 second intervals at most twice, never below the 12%-of-width credit floor, then confirmed-cancel and walk away. Stale intentions die; the next cycle re-decides from scratch. Partial fills are kept — every filled unit is a complete defined-risk condor. Pace is throttled by construction: at most one new position per cycle, a 45 minute cooldown between entries, and the sleeve budget caps the book at three to four condors.
+Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-credit mid, concede two cents at 40 second intervals at most twice, never below the 12%-of-width credit floor, then confirmed-cancel and walk away. Stale intentions die; the next cycle re-decides from scratch. Partial fills are kept — every filled unit is a complete defined-risk condor. Pace is throttled by construction: at most one new position per cycle, re-entry on the same underlying spaced 45 minutes, a thin 10 minute global circuit breaker, a hard cap of six entries per day, and the sleeve budget caps the book at three to four condors.
 
 ## Quickstart
 

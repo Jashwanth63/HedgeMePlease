@@ -63,7 +63,11 @@ class StrategyConfig:
     far_dte_min: int = 21
     far_dte_max: int = 45
     forecast_horizon_days: int = 2
-    entry_cooldown_min: int = 45           # minimum spacing between new positions
+    # Entry pacing. The quality filters are the gates and the risk engine; these
+    # exist for temporal diversification and as software circuit breakers.
+    same_underlying_cooldown_min: int = 45  # re-entry spacing per underlying
+    global_entry_spacing_min: int = 10      # thin circuit breaker across all entries
+    max_entries_per_day: int = 6            # hard cap regardless of budget recycling
 
 
 @dataclass(frozen=True)
