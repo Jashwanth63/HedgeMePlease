@@ -1,1 +1,8 @@
 .env
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+data/*.db
+data/*.log
+data/models/*.joblib

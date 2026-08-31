@@ -1,0 +1,56 @@
+app:
+  name: "AlpachaBot"
+  paper: true
+  dry_run: false
+  db_path: "data/alpacha.db"
+  models_dir: "data/models"
+
+data:
+  symbols:
+    - "SPY"
+    - "QQQ"
+  timeframe: "1Min"
+  history_days: 90
+  refresh_interval_sec: 60
+
+model:
+  daily_lags: 1
+  weekly_lags: 5
+  monthly_lags: 22
+  use_leverage: true
+  use_jumps: true
+  jump_alpha: 0.01
+  iv_vs_rv_multiple: 1.2
+  retrain_if_older_days: 5
+  min_train_days: 30
+
+risk:
+  warn_drawdown_pct: 0.02       # 2.0% warning threshold (reduce sizing & block entries)
+  kill_drawdown_pct: 0.035      # 3.5% hard kill switch (liquidate & stop)
+  max_portfolio_bp_pct: 0.30    # Maximum 30% buying power allocation
+  max_contracts_per_trade: 5
+  single_trade_max_loss_pct: 0.01
+
+strategy:
+  target_delta: 0.20
+  delta_tolerance: 0.05
+  min_dte: 21
+  max_dte: 45
+  target_dte: 30
+  macro_buffer_hours: 2.0
+  min_credit: 0.20              # Minimum credit in $ per spread
+  profit_target_pct: 0.50       # Exit at 50% max profit
+  stop_loss_multiplier: 2.0     # Exit at 2.0x credit received loss
+  close_dte_threshold: 2        # Close position if DTE <= 2 to avoid gamma risk
+  contango_min_ratio: 0.98      # Near IV / Next IV ratio threshold (<= 1.05 for normal contango)
+
+execution:
+  scan_cron_minutes: "*/5"
+  trading_hours_only: true
+  order_poll_timeout_sec: 60
+  order_poll_interval_sec: 2
+  limit_price_offset: 0.01      # Improve fill probability by 1 cent
+
+alerts:
+  enabled: true
+  webhook_url: ""               # Set via ALERTS_WEBHOOK_URL env or here
