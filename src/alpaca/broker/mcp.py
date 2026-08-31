@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Optional
 
 from mcp import ClientSession, StdioServerParameters
@@ -45,8 +47,10 @@ class AlpacaMCP:
                 "Clone https://github.com/alpacahq/alpaca-mcp-server there or set ALPACA_MCP_DIR."
             )
         env = {**os.environ, **alpaca_env()}
+        # under systemd the service PATH is minimal; resolve uv absolutely
+        uv_cmd = shutil.which("uv") or str(Path.home() / ".local" / "bin" / "uv")
         params = StdioServerParameters(
-            command="uv",
+            command=uv_cmd,
             args=["run", "--directory", str(server_dir), "alpaca-mcp-server", "--transport", "stdio"],
             env=env,
         )
