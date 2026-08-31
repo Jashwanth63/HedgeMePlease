@@ -4,7 +4,7 @@
 
 Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window, harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — and lets a team of four LLM agents inform, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-63%20passing-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-64%20passing-brightgreen)
 
 ---
 
@@ -115,7 +115,7 @@ Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-cred
 git clone https://github.com/alpacahq/alpaca-mcp-server ../alpaca-mcp-server
 uv sync --dev
 cp .env.example .env    # Alpaca paper keys + optional OpenRouter key
-uv run pytest           # 63 tests, all offline, no keys needed
+uv run pytest           # 64 tests, all offline, no keys needed
 ```
 
 | Command | What it does |
@@ -128,10 +128,19 @@ uv run pytest           # 63 tests, all offline, no keys needed
 | `uv run alpaca loop` | the daemon, until contest end |
 | `uv run alpaca flatten` / `panic` / `unhalt` | manual overrides |
 | `uv run alpaca memos` | tail the audit trail |
+| `uv run alpaca report` | equity path, forecast vs realized, every trade with its reasoning |
 
 ## Tested like we mean it
 
 Every component has offline tests with zero network and zero keys: the pricing engine (put-call parity, intrinsic limits), the stress grid (tail losses bounded by wing width), the risk engine (every rung of the ladder), the vol pipeline (incomplete days excluded — annualizing a partial day would bias the edge gate), the HAR model (walk-forward against dumb baselines, demotion rules), the gates (contest calendar blackouts included), the condor builder (credit floors, delta bands, loss caps), the executor ladder (floor-respecting concessions, confirmed cancels, partial fills), and — the capstone — **the full LangGraph cycle running end to end against a fake broker**, from trigger to journaled dry-run execution, plus the kill-switch path proving a breach halts and flattens.
+
+## Every decision is written down
+
+`state/alpaca.db` is the exhibit: a `memos` table with every gate reading, candidate menu, chosen proposal and the proposer's stated reason, veto verdict, risk verdict, fill, and exit — plus every raw LLM call (role, input, response). Each filled trade stores its complete entry context (evidence, gates, regime view, agent reasoning) in the `trades` table next to its realized PnL, so one row answers "what did this condor make and why did we ever own it." Forecasts are stored beside next-day realized vol, the same join that drives the model's self-demotion rule. `state/graph_checkpoints.db` checkpoints every cycle's full LangGraph state, making any decision replayable. `uv run alpaca report` prints the digest.
+
+## Deployment
+
+Runs anywhere Python runs; the contest instance lives on a small Azure VM under systemd (restart on failure, start on boot), deployed by a local one-shot script that ships the working tree and keys over SSH — deliberately untracked, so nothing about the infrastructure or credentials touches the repo. One operational rule: never run the daemon in two places against the same account.
 
 ## Design principles
 
