@@ -7,8 +7,36 @@ app:
 
 data:
   symbols:
+    # Core Broad Market & Sector ETFs
     - "SPY"
     - "QQQ"
+    - "IWM"
+    - "VOO"
+    - "VTI"
+    - "VT"
+    - "IVV"
+    # Fixed Income / Treasury Bonds (Hedge)
+    - "TLT"
+    # Commodities, Energy & Precious Metals (Hedge)
+    - "GLD"
+    - "SLV"
+    - "USO"
+    - "XLE"
+    # High-Beta & Growth Equities
+    - "COIN"
+    - "NVDA"
+    - "TSLA"
+    - "AMD"
+    - "META"
+    - "MSFT"
+    - "AAPL"
+    - "GOOGL"
+    - "AMZN"
+    # Financials, Healthcare & Value Blue-Chips
+    - "BRK.B"
+    - "JPM"
+    - "COST"
+    - "JNJ"
   timeframe: "1Min"
   history_days: 90
   refresh_interval_sec: 60
@@ -30,7 +58,13 @@ risk:
   max_portfolio_bp_pct: 0.30    # Maximum 30% buying power allocation
   max_contracts_per_trade: 10   # Increased to 10 contracts per trade
   single_trade_max_loss_pct: 0.03 # 3% risk allocation per trade
-
+  use_risk_parity: true         # Inverse-volatility weighting across asset classes
+  target_annualized_vol: 0.15   # Benchmark volatility for sizing
+  caps:
+    equity_max_pct: 0.50        # Max 50% exposure in Equities
+    fixed_income_max_pct: 0.25  # Max 25% exposure in Fixed Income (TLT)
+    commodities_max_pct: 0.25   # Max 25% exposure in Commodities (GLD, SLV, USO, XLE)
+    single_symbol_max_pct: 0.08 # Max 8% exposure in any single ticker
 
 strategy:
   target_delta: 0.20
@@ -50,8 +84,9 @@ execution:
   trading_hours_only: true
   order_poll_timeout_sec: 60
   order_poll_interval_sec: 2
-  limit_price_offset: 0.01      # Improve fill probability by 1 cent
+  limit_price_offset: 0.01
 
 alerts:
   enabled: true
-  webhook_url: ""               # Set via ALERTS_WEBHOOK_URL env or here
+  webhook_url: ""
+

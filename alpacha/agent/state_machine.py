@@ -172,6 +172,8 @@ class TradingStateMachineBuilder:
                     available_bp=available_bp,
                     wing_width=max(condor.put_wing_width, condor.call_wing_width),
                     credit_per_share=condor.net_credit_per_share,
+                    symbol=sym,
+                    forecasted_vol=vol,
                 )
                 if contracts > 0 and not err:
                     built_condors[sym] = condor.to_dict()

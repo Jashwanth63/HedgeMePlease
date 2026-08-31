@@ -45,12 +45,24 @@ class ModelConfig:
 
 
 @dataclass
+class AssetClassCapsConfig:
+    equity_max_pct: float = 0.50
+    fixed_income_max_pct: float = 0.25
+    commodities_max_pct: float = 0.25
+    single_symbol_max_pct: float = 0.08
+
+
+@dataclass
 class RiskConfig:
     warn_drawdown_pct: float = 0.02
     kill_drawdown_pct: float = 0.035
     max_portfolio_bp_pct: float = 0.30
     max_contracts_per_trade: int = 10
     single_trade_max_loss_pct: float = 0.03
+    use_risk_parity: bool = True
+    target_annualized_vol: float = 0.15
+    caps: AssetClassCapsConfig = field(default_factory=AssetClassCapsConfig)
+
 
 
 
@@ -123,7 +135,10 @@ class Settings:
         app_cfg = AppConfig(**config_dict.get("app", {}))
         data_cfg = DataConfig(**config_dict.get("data", {}))
         model_cfg = ModelConfig(**config_dict.get("model", {}))
-        risk_cfg = RiskConfig(**config_dict.get("risk", {}))
+        risk_dict = dict(config_dict.get("risk", {}))
+        if "caps" in risk_dict and isinstance(risk_dict["caps"], dict):
+            risk_dict["caps"] = AssetClassCapsConfig(**risk_dict["caps"])
+        risk_cfg = RiskConfig(**risk_dict)
         strategy_cfg = StrategyConfig(**config_dict.get("strategy", {}))
         exec_cfg = ExecutionConfig(**config_dict.get("execution", {}))
 

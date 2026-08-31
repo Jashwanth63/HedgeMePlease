@@ -127,15 +127,28 @@ class RiskManager:
             message=msg,
         )
 
+    @staticmethod
+    def get_asset_class(symbol: str) -> str:
+        """Classifies symbol into an asset category."""
+        sym = symbol.upper()
+        if sym in ["TLT", "IEF", "SHY", "BND", "AGG"]:
+            return "FIXED_INCOME"
+        elif sym in ["GLD", "SLV", "USO", "UNG", "XLE", "DBA", "DBC"]:
+            return "COMMODITIES"
+        return "EQUITIES"
+
     def calculate_position_size(
         self,
         account_equity: float,
         available_bp: float,
         wing_width: float,
         credit_per_share: float,
+        symbol: Optional[str] = None,
+        forecasted_vol: Optional[float] = None,
     ) -> Tuple[int, Optional[str]]:
         """
         Calculates safe number of Iron Condor contracts to trade.
+        Applies Risk Parity / Inverse Volatility weighting when use_risk_parity is enabled.
         Max loss per contract = (Wing Width - Credit) * 100
         """
         if account_equity <= 0 or wing_width <= 0:
@@ -144,8 +157,19 @@ class RiskManager:
         max_loss_per_share = max(0.01, wing_width - credit_per_share)
         max_loss_per_contract = max_loss_per_share * 100.0
 
-        # Max loss budget per trade (e.g. 1% of account equity)
+        # Base Risk Budget (e.g. 3% of account equity)
         risk_budget = account_equity * self.settings.risk.single_trade_max_loss_pct
+
+        # Apply Risk Parity / Volatility Weighting
+        if self.settings.risk.use_risk_parity and forecasted_vol and forecasted_vol > 0.01:
+            target_vol = self.settings.risk.target_annualized_vol  # e.g. 0.15 (15%)
+            vol_multiplier = max(0.25, min(2.5, target_vol / forecasted_vol))
+            risk_budget *= vol_multiplier
+            logger.info(
+                f"Risk Parity Sizing for {symbol or 'Asset'}: Forecasted Vol={forecasted_vol:.2%}, "
+                f"Target Vol={target_vol:.2%}, Vol Multiplier={vol_multiplier:.2f}x, Adjusted Budget=${risk_budget:,.2f}"
+            )
+
         size_by_risk = max(1, int(risk_budget / max_loss_per_contract))
 
         # Max buying power allocation (e.g. 30% of available buying power)
@@ -161,7 +185,8 @@ class RiskManager:
             return 0, f"Insufficient buying power: requires ${total_risk:,.2f}, available ${available_bp:,.2f}"
 
         logger.info(
-            f"Sized Iron Condor: {contracts} contracts "
+            f"Sized Iron Condor ({symbol or 'Trade'}): {contracts} contracts "
             f"(Max loss/contract=${max_loss_per_contract:.2f}, Total risk=${total_risk:.2f})"
         )
         return contracts, None
+
