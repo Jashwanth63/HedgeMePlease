@@ -13,11 +13,27 @@ from langchain_core.tools import tool
 
 from alpacha.cli.driver import AlpacaCLIDriver
 from alpacha.config import Settings
+from alpacha.data.news_client import AlpacaNewsClient
 
 
 def get_cli_driver() -> AlpacaCLIDriver:
     settings = Settings.load()
     return AlpacaCLIDriver(settings)
+
+
+def get_news_client() -> AlpacaNewsClient:
+    settings = Settings.load()
+    return AlpacaNewsClient(settings)
+
+
+@tool
+def alpaca_get_news(symbols: str = "SPY,QQQ,NVDA,GLD,TLT", limit: int = 10) -> str:
+    """Fetches breaking market headlines and articles for given symbols from Alpaca News API."""
+    client = get_news_client()
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    articles = client.get_latest_news(symbols=sym_list, limit=limit)
+    return json.dumps(articles)
+
 
 
 @tool
@@ -105,4 +121,6 @@ def get_alpaca_mcp_tools() -> List[Any]:
         alpaca_cancel_all_orders,
         alpaca_close_all_positions,
         alpaca_get_stock_bars,
+        alpaca_get_news,
     ]
+

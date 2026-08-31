@@ -16,7 +16,9 @@ from alpacha.agent.state import TradingAgentState
 from alpacha.cli.driver import AlpacaCLIDriver
 from alpacha.config import Settings
 from alpacha.data.macro_calendar import MacroCalendar
+from alpacha.data.news_client import AlpacaNewsClient
 from alpacha.data.sqlite_manager import SQLiteManager
+from alpacha.model.news_analyzer import NewsSentimentAnalyzer
 from alpacha.model.trainer import ModelTrainer
 from alpacha.risk.risk_manager import RiskLevel, RiskManager
 from alpacha.strategy.gates import StrategyGateManager
@@ -31,11 +33,14 @@ class TradingStateMachineBuilder:
         self.settings = settings
         self.db = db_manager or SQLiteManager(settings.app.db_path)
         self.cli_driver = AlpacaCLIDriver(settings)
+        self.news_client = AlpacaNewsClient(settings)
+        self.news_analyzer = NewsSentimentAnalyzer()
         self.macro_calendar = MacroCalendar(settings.app.macro_calendar_path)
         self.trainer = ModelTrainer(settings, self.db)
         self.risk_manager = RiskManager(settings, self.db)
         self.gate_manager = StrategyGateManager(settings, self.macro_calendar)
         self.ic_builder = IronCondorBuilder(settings)
+
 
     def risk_evaluation_node(self, state: TradingAgentState) -> Dict[str, Any]:
         """Node 1: Evaluates account equity against the drawdown ladder."""
@@ -91,9 +96,27 @@ class TradingStateMachineBuilder:
         history = list(state.get("step_history", [])) + ["market_data"]
         return {"bars_data": bars_data, "step_history": history}
 
+    def news_analysis_node(self, state: TradingAgentState) -> Dict[str, Any]:
+        """Node 3: Ingests breaking news & analyzes sentiment/risk."""
+        logger.info("[State Machine: Node 3] Ingesting & Analyzing Live Market News...")
+        symbols = state.get("symbols", self.settings.data.symbols)
+        news_analysis = {}
+
+        try:
+            articles = self.news_client.get_latest_news(symbols=symbols[:10], limit=30)
+            for sym in symbols:
+                sym_articles = [a for a in articles if sym in a.get("symbols", [])]
+                res = self.news_analyzer.analyze_news(sym, sym_articles)
+                news_analysis[sym] = res.__dict__
+        except Exception as e:
+            logger.error(f"Error in news analysis: {e}")
+
+        history = list(state.get("step_history", [])) + ["news_analysis"]
+        return {"news_analysis": news_analysis, "step_history": history}
+
     def volatility_forecasting_node(self, state: TradingAgentState) -> Dict[str, Any]:
-        """Node 3: Fits Enhanced HAR model and generates 1-day RV forecasts."""
-        logger.info("[State Machine: Node 3] Generating HAR Volatility Forecasts...")
+        """Node 4: Fits Enhanced HAR model and generates 1-day RV forecasts."""
+        logger.info("[State Machine: Node 4] Generating HAR Volatility Forecasts...")
         bars_data = state.get("bars_data", {})
         forecasts = {}
 
@@ -107,15 +130,21 @@ class TradingStateMachineBuilder:
         history = list(state.get("step_history", [])) + ["volatility_forecasting"]
         return {"forecasts": forecasts, "step_history": history}
 
-
     def gate_filtering_node(self, state: TradingAgentState) -> Dict[str, Any]:
-        """Node 4: Evaluates Macro, Contango, and IV/RV Edge gates."""
-        logger.info("[State Machine: Node 4] Evaluating Entry Gates...")
+        """Node 5: Evaluates Macro, News Sentiment, Contango, and IV/RV Edge gates."""
+        logger.info("[State Machine: Node 5] Evaluating Entry & News Gates...")
         forecasts = state.get("forecasts", {})
+        news_analysis = state.get("news_analysis", {})
         gate_results = {}
         eligible_symbols = []
 
         for sym, ann_vol in forecasts.items():
+            # Check News Risk Gate
+            sym_news = news_analysis.get(sym, {})
+            if sym_news.get("is_event_risk_high", False):
+                logger.warning(f"News Gate Blocked for {sym}: High event shock risk detected!")
+                continue
+
             near_iv = ann_vol * 1.25
             next_iv = ann_vol * 1.27
             gate_res = self.gate_manager.evaluate_all_gates(
@@ -136,6 +165,7 @@ class TradingStateMachineBuilder:
             "eligible_symbols": eligible_symbols,
             "step_history": history,
         }
+
 
     def iron_condor_builder_node(self, state: TradingAgentState) -> Dict[str, Any]:
         """Node 5: Builds 0.20 delta Iron Condor structures with Expected Move wings."""
@@ -364,12 +394,13 @@ class TradingStateMachineBuilder:
 
 
     def build_graph(self):
-        """Constructs and compiles the LangGraph State Machine."""
+        """Constructs and compiles the LangGraph State Machine with News & Sentiment Nodes."""
         graph = StateGraph(TradingAgentState)
 
         graph.add_node("risk_node", self.risk_evaluation_node)
         graph.add_node("kill_node", self.kill_switch_liquidation_node)
         graph.add_node("market_data_node", self.market_data_node)
+        graph.add_node("news_node", self.news_analysis_node)
         graph.add_node("volatility_node", self.volatility_forecasting_node)
         graph.add_node("gates_node", self.gate_filtering_node)
         graph.add_node("ic_builder_node", self.iron_condor_builder_node)
@@ -396,7 +427,8 @@ class TradingStateMachineBuilder:
             END: END,
         })
         graph.add_edge("kill_node", END)
-        graph.add_edge("market_data_node", "volatility_node")
+        graph.add_edge("market_data_node", "news_node")
+        graph.add_edge("news_node", "volatility_node")
         graph.add_edge("volatility_node", "gates_node")
         graph.add_conditional_edges("gates_node", route_gates, {
             "ic_builder_node": "ic_builder_node",
@@ -406,4 +438,5 @@ class TradingStateMachineBuilder:
         graph.add_edge("executor_node", END)
 
         return graph.compile()
+
 

@@ -24,9 +24,11 @@ class TradingAgentState(TypedDict, total=False):
     should_liquidate: bool
     can_trade: bool
 
-    # Volatility & Market Data State
+    # Volatility, Market Data & News State
     bars_data: Dict[str, Any]
     forecasts: Dict[str, float]  # symbol -> annualized RV forecast
+    news_analysis: Dict[str, Any]  # symbol -> NewsAnalysisResult dict
+
 
     # Strategy & Gate State
     gate_results: Dict[str, Any]  # symbol -> GateResult dict
