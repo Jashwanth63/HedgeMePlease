@@ -79,8 +79,14 @@ class Db:
         self.conn.execute("PRAGMA journal_mode=WAL")
         self.conn.executescript(_SCHEMA)
         cols = {r["name"] for r in self.conn.execute("PRAGMA table_info(trades)")}
-        if "entry_context" not in cols:
-            self.conn.execute("ALTER TABLE trades ADD COLUMN entry_context TEXT")
+        for col, ddl in (
+            ("entry_context", "TEXT"),
+            ("last_cost", "REAL"),
+            ("unrealized_pnl", "REAL"),
+            ("marked_at", "TEXT"),
+        ):
+            if col not in cols:
+                self.conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {ddl}")
         self.conn.commit()
 
     def close(self) -> None:

@@ -72,8 +72,15 @@ def render(db: Db) -> str:
     if not trades:
         parts.append("<pre class='dim'>none yet</pre>")
     for t in trades:
-        pnl = f"{t['realized_pnl']:+,.0f}" if t["realized_pnl"] is not None else "open"
-        pnl_cls = "dim" if pnl == "open" else ("good" if (t["realized_pnl"] or 0) >= 0 else "bad")
+        if t["realized_pnl"] is not None:
+            pnl = f"{t['realized_pnl']:+,.0f} realized"
+            pnl_cls = "good" if t["realized_pnl"] >= 0 else "bad"
+        elif t["unrealized_pnl"] is not None:
+            marked = (t["marked_at"] or "")[11:16]
+            pnl = f"{t['unrealized_pnl']:+,.0f} unrealized (cost {t['last_cost']:.2f}, marked {marked})"
+            pnl_cls = "good" if t["unrealized_pnl"] >= 0 else "bad"
+        else:
+            pnl, pnl_cls = "awaiting first mark", "dim"
         parts.append(
             f"<pre>{_e(t['trade_id'])}  {_e(t['symbol'])} x{t['qty']}  credit {t['credit']:.2f}  "
             f"max_loss {t['max_loss']:.0f}  [{_e(t['status'])}]  "

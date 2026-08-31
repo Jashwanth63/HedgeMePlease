@@ -199,7 +199,12 @@ def _report() -> None:
     if not trades:
         print("  none yet")
     for t in trades:
-        pnl = f"{t['realized_pnl']:+,.0f}" if t["realized_pnl"] is not None else "open"
+        if t["realized_pnl"] is not None:
+            pnl = f"{t['realized_pnl']:+,.0f}"
+        elif t["unrealized_pnl"] is not None:
+            pnl = f"open, {t['unrealized_pnl']:+,.0f} unrealized"
+        else:
+            pnl = "open"
         print(f"  {t['trade_id']}  {t['symbol']} {t['structure']} x{t['qty']}  "
               f"credit {t['credit']:.2f}  max_loss {t['max_loss']:.0f}  [{t['status']}]  pnl {pnl}"
               + (f"  exit: {t['close_reason']}" if t["close_reason"] else ""))

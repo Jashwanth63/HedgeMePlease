@@ -152,6 +152,10 @@ def build_graph(services: Services, checkpointer=None):
             cost = await cost_to_close(services.broker, pos)
             if cost is None:
                 continue
+            ledger.mark_position(
+                pos.position_id, round(cost, 2),
+                round((pos.credit - cost) * 100 * pos.qty, 2),
+            )
             if cost <= pos.credit * (1 - STRAT.profit_take_frac):
                 await submit_close(services.broker, memo, pos, "profit_target_50pct")
                 ledger.update(pos)

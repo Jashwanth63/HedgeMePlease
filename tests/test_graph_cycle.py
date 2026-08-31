@@ -104,6 +104,13 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
     second = run(services)
     assert str(second.get("skip", "")).startswith("entry spacing"), second.get("skip")
 
+    marked = services.db.conn.execute(
+        "SELECT last_cost, unrealized_pnl, marked_at FROM trades WHERE trade_id=?",
+        (open_pos[0].position_id,),
+    ).fetchone()
+    assert marked["unrealized_pnl"] is not None, "manage must mark open positions every cycle"
+    assert marked["marked_at"]
+
     services.db.set_state("last_entry_at", "2026-08-31T09:00:00-04:00")  # spacing elapsed
     third = run(services)
     gates = third.get("gates") or {}

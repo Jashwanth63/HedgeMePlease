@@ -87,6 +87,14 @@ class Ledger:
         )
         self.db.conn.commit()
 
+    def mark_position(self, position_id: str, cost: float, unrealized_pnl: float) -> None:
+        """Store the cycle's live mark so dashboards can show PnL on open trades."""
+        self.db.conn.execute(
+            "UPDATE trades SET last_cost=?, unrealized_pnl=?, marked_at=? WHERE trade_id=?",
+            (cost, unrealized_pnl, now_et().isoformat(), position_id),
+        )
+        self.db.conn.commit()
+
     def open_positions(self) -> list[Position]:
         rows = self.db.conn.execute(
             "SELECT * FROM trades WHERE status IN ('pending', 'open', 'closing')"

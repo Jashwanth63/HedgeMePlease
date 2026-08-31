@@ -14,12 +14,15 @@ def test_render_shows_account_trades_and_memos(tmp_path):
     pos = make_position("SLA-MON-1")
     ledger.add(pos, entry_context={"gates": {"iv_rv_ratio": 1.36}, "proposer_why": "best ratio"})
 
+    ledger.mark_position("SLA-MON-1", 0.55, 55.0)
+
     page = render(db)
     assert "97,863.64" in page
     assert "SLA-MON-1" in page
     assert "best ratio" in page
     assert "gates" in page
     assert "9.3%" in page
+    assert "unrealized" in page and "+55" in page
 
 
 def test_render_empty_db_does_not_crash(tmp_path):
