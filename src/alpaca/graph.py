@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import asdict, dataclass, field
+from datetime import time as dtime
 from datetime import timedelta
 from typing import Any, Optional, TypedDict
 
@@ -147,6 +148,13 @@ def build_graph(services: Services, checkpointer=None):
                 continue
             if now >= FLATTEN_AT:
                 await submit_close(services.broker, memo, pos, "contest_end_flatten")
+                ledger.update(pos)
+                continue
+            # GLD/TLT can land on expiries before the contest flatten (no
+            # Thursday listings); nothing is ever held through its own expiry
+            expires_today = any(leg.expiry == now.date().isoformat() for leg in pos.legs)
+            if expires_today and now.time() >= dtime(15, 15):
+                await submit_close(services.broker, memo, pos, "expiry_day_close")
                 ledger.update(pos)
                 continue
             cost = await cost_to_close(services.broker, pos)

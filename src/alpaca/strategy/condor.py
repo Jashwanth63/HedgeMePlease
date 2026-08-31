@@ -261,11 +261,12 @@ def build_candidates(
     diag["expiry"] = expiry
 
     iv = atm_iv(contracts, expiry, spot) or 0.12
+    wing_floor = STRAT.wing_width_floors.get(underlying, STRAT.min_wing_width)
     em_width = max(
-        STRAT.min_wing_width,
+        wing_floor,
         round(expected_move(spot, iv, dte_of(expiry, now))),
     )
-    widths = sorted({em_width, STRAT.min_wing_width}, reverse=True)
+    widths = sorted({em_width, wing_floor}, reverse=True)
 
     candidates: list[Proposal] = []
     for width in widths:

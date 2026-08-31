@@ -74,6 +74,29 @@ def book_net_delta_dollars(positions: list[Position], spots: dict[str, float]) -
     return total
 
 
+def cluster_of(underlying: str) -> str:
+    return STRAT.clusters.get(underlying, "other")
+
+
+def cluster_delta_dollars(
+    positions: list[Position], spots: dict[str, float]
+) -> dict[str, float]:
+    """Directional exposure per correlation cluster. Equity uses SPY-beta
+    weighting; other clusters use raw delta dollars, because beta to SPY is
+    meaningless for gold or duration."""
+    out: dict[str, float] = {}
+    for pos in positions:
+        spot = spots.get(pos.underlying, 0.0)
+        cluster = cluster_of(pos.underlying)
+        beta = STRAT.betas.get(pos.underlying, 1.0) if cluster == "equity" else 1.0
+        for leg in pos.legs:
+            sign = 1 if leg.side == "buy" else -1
+            out[cluster] = out.get(cluster, 0.0) + (
+                sign * leg.entry_delta * 100.0 * leg.ratio_qty * pos.qty * spot * beta
+            )
+    return out
+
+
 def book_net_vega_dollars(
     positions: list[Position], spots: dict[str, float], asof: Optional[datetime] = None
 ) -> float:
@@ -137,9 +160,24 @@ def check_pre_trade(
             f"exceeds {RISK.sleeve_budget:.0f}"
         )
 
-    delta = book_net_delta_dollars(open_positions, spots) + proposal.net_delta_dollars
-    if abs(delta) > RISK.max_net_delta_dollars:
-        reasons.append(f"net delta {delta:,.0f} beyond cap {RISK.max_net_delta_dollars:,.0f}")
+    prop_cluster = cluster_of(proposal.underlying)
+    cluster_cap = STRAT.cluster_budget_frac * RISK.sleeve_budget
+    cluster_committed = sum(
+        p.max_loss for p in open_positions if cluster_of(p.underlying) == prop_cluster
+    )
+    if cluster_committed + proposal.max_loss > cluster_cap:
+        reasons.append(
+            f"{prop_cluster} cluster budget: {cluster_committed:.0f} committed + "
+            f"{proposal.max_loss:.0f} proposed exceeds {cluster_cap:.0f}"
+        )
+
+    deltas = cluster_delta_dollars(open_positions + [proposal.position], spots)
+    for cluster, exposure in deltas.items():
+        cap = STRAT.cluster_delta_caps.get(cluster, RISK.max_net_delta_dollars)
+        if abs(exposure) > cap:
+            reasons.append(
+                f"{cluster} cluster delta {exposure:,.0f} beyond cap {cap:,.0f}"
+            )
 
     vega = book_net_vega_dollars(open_positions, spots, asof) + proposal.net_vega_dollars
     if vega < RISK.min_net_vega:

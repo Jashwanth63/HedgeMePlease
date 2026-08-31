@@ -47,11 +47,25 @@ class RiskLimits:
 
 @dataclass(frozen=True)
 class StrategyConfig:
-    underlyings: tuple[str, ...] = ("SPY", "QQQ")
+    underlyings: tuple[str, ...] = ("SPY", "QQQ", "GLD", "TLT")
     betas: dict[str, float] = field(default_factory=lambda: {"SPY": 1.0, "QQQ": 1.18})
+    # correlation clusters: budgets and direction limits apply per cluster so
+    # the book cannot quietly become one equity bet wearing four tickers
+    clusters: dict[str, str] = field(default_factory=lambda: {
+        "SPY": "equity", "QQQ": "equity", "GLD": "metals", "TLT": "rates",
+    })
+    cluster_budget_frac: float = 0.5       # max share of sleeve budget per cluster
+    cluster_delta_caps: dict[str, float] = field(default_factory=lambda: {
+        "equity": 25_000.0, "metals": 10_000.0, "rates": 10_000.0,
+    })
     short_delta_target: float = 0.20
     short_delta_band: tuple[float, float] = (0.12, 0.28)
-    min_wing_width: float = 5.0            # dollars; EM wings shrink toward this
+    # wing width floors scale to each product's price and vol; a 5 dollar wing
+    # on a 90 dollar TLT would fail every credit floor by construction
+    wing_width_floors: dict[str, float] = field(default_factory=lambda: {
+        "SPY": 5.0, "QQQ": 5.0, "GLD": 3.0, "TLT": 1.0,
+    })
+    min_wing_width: float = 5.0            # fallback for unlisted underlyings
     min_credit_frac_condor: float = 0.12   # credit / width floor
     profit_take_frac: float = 0.50
     loss_close_mult: float = 2.5
