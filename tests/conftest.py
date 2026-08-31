@@ -138,8 +138,9 @@ class FakeBroker:
             und, yymmdd, cp = m.groups()
             strike = int(s[-8:]) / 1000.0
             spot = self.spot_map.get(und, 650.0)
-            t = 3 / 365 if yymmdd == "260903" else 30 / 365
-            mid = max(bs(cp == "C", spot, strike, t, 0.30).price, 0.02)
+            t = 3 / 365 if yymmdd in ("260903", "260904") else 30 / 365
+            iv = 0.65 if und in ("DELL", "AVGO") else 0.30  # matches the fake chains
+            mid = max(bs(cp == "C", spot, strike, t, iv).price, 0.02)
             out[s] = {"bp": round(mid - 0.02, 2), "ap": round(mid + 0.02, 2)}
         return out
 

@@ -81,6 +81,74 @@ def _leg(contract: Contract, side: str, spot: float, now: datetime) -> Leg:
     )
 
 
+def build_runup_strangle(
+    event: EventTrade,
+    contracts: list[Contract],
+    spot: float,
+    now: datetime,
+) -> tuple[Optional[Proposal], dict]:
+    """Long OTM strangle on the post-event expiry, bought ahead of the print
+    to harvest the documented pre-earnings IV run-up. Max loss is the debit,
+    capped by config; exits before the print, always."""
+    diag: dict = {"symbol": event.symbol, "phase": "runup"}
+    if spot <= 0:
+        diag["reject"] = "no spot"
+        return None, diag
+
+    calls = sorted(
+        (c for c in contracts if c.expiry == event.post_expiry and c.opt_type == "call"
+         and _quote_ok(c) and c.strike > spot),
+        key=lambda c: c.strike,
+    )
+    puts = sorted(
+        (c for c in contracts if c.expiry == event.post_expiry and c.opt_type == "put"
+         and _quote_ok(c) and c.strike < spot),
+        key=lambda c: -c.strike,
+    )
+    if not calls or not puts:
+        diag["reject"] = "no OTM strikes with usable quotes"
+        return None, diag
+
+    max_debit_unit = SLEEVE_B.runup_max_debit / 100.0
+    for step in range(min(4, len(calls), len(puts))):
+        call, put = calls[step], puts[step]
+        debit = call.mid + put.mid
+        if debit <= 0:
+            continue
+        if debit > max_debit_unit:
+            diag[f"step_{step}"] = f"debit {debit:.2f} over cap {max_debit_unit:.2f}"
+            continue
+        legs = [_leg(put, "buy", spot, now), _leg(call, "buy", spot, now)]
+        net_delta = sum(l.entry_delta * 100.0 * spot for l in legs)
+        net_vega = 0.0
+        for l in legs:
+            t = t_years(l.expiry, now)
+            est = bs(l.opt_type == "call", spot, l.strike, t, l.entry_iv)
+            net_vega += est.vega * 0.01 * 100.0
+
+        position_id = f"SLB-{event.symbol}-RU-{now.strftime('%m%d%H%M%S')}"
+        position = Position(
+            position_id=position_id, sleeve="B", underlying=event.symbol,
+            structure="event_runup_strangle", legs=legs, qty=1,
+            credit=round(debit, 2),            # for long structures: the debit paid
+            width=abs(call.strike - put.strike),
+            max_loss=round(debit * 100, 2),
+            client_order_id=position_id, opened_at=now.isoformat(),
+        )
+        proposal = Proposal(
+            underlying=event.symbol, structure="event_runup_strangle", legs=legs, qty=1,
+            credit=round(debit, 2), width=position.width, max_loss=position.max_loss,
+            net_delta_dollars=net_delta, net_vega_dollars=net_vega,
+            dte=dte_of(event.post_expiry, now), position=position,
+        )
+        diag["proposal"] = proposal.summary()
+        diag["debit"] = round(debit, 2)
+        return proposal, diag
+
+    diag.setdefault("reject", "no strangle inside the debit cap")
+    return None, diag
+
+
 def build_crush_condor(
     event: EventTrade,
     contracts: list[Contract],

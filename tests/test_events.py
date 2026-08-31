@@ -73,19 +73,163 @@ def test_graph_opens_crush_in_window_once(tmp_path, monkeypatch):
     services = make_services(tmp_path, broker=broker, dry_run=False)
     run(services)
 
-    open_pos = [p for p in services.ledger.open_positions() if p.sleeve == "B"]
-    assert len(open_pos) == 1, "the DELL crush condor must open inside its window"
-    assert open_pos[0].underlying == "DELL"
+    b_open = [p for p in services.ledger.open_positions() if p.sleeve == "B"]
+    dell_crush = [p for p in b_open if p.underlying == "DELL" and "crush" in p.structure]
+    assert len(dell_crush) == 1, f"the DELL crush condor must open inside its window: {b_open}"
     assert services.db.get_state("sleeveB:DELL:crush") == "opened"
+    # Tuesday afternoon is also inside AVGO's run-up window; a strangle there is legitimate
 
     orders_before = len(broker.placed_orders)
-    run(services)  # second cycle in the same window must not duplicate
-    b_positions = [p for p in services.ledger.open_positions() if p.sleeve == "B"]
-    assert len(b_positions) == 1
-    new_entry_orders = [
-        o for o in broker.placed_orders[orders_before:] if "SLB-DELL" in o["client_order_id"]
+    run(services)  # second cycle in the same window must not duplicate entries
+    dell_crush_after = [
+        p for p in services.ledger.open_positions()
+        if p.sleeve == "B" and p.underlying == "DELL" and "crush" in p.structure
     ]
-    assert not new_entry_orders
+    assert len(dell_crush_after) == 1
+    new_entry_orders = [
+        o for o in broker.placed_orders[orders_before:]
+        if o["client_order_id"].startswith("SLB-") and "-x" not in o["client_order_id"]
+    ]
+    assert not new_entry_orders, new_entry_orders
+
+
+def test_runup_strangle_all_long_and_capped():
+    from alpaca.broker.executor import is_long_structure
+    from alpaca.strategy.events import build_runup_strangle
+
+    runup_now = datetime(2026, 8, 31, 14, 50, tzinfo=ET)  # prior day, inside window
+    contracts = dell_contracts(iv=0.35)  # calmer pre-event IV keeps debit under cap
+    proposal, diag = build_runup_strangle(DELL_EVENT, contracts, 140.0, runup_now)
+    assert proposal is not None, diag
+    assert is_long_structure(proposal.position)
+    assert proposal.max_loss <= SLEEVE_B.runup_max_debit
+    assert proposal.position.structure == "event_runup_strangle"
+    sides = {l.opt_type for l in proposal.legs}
+    assert sides == {"put", "call"}
+
+
+def test_runtime_viability_windows():
+    monday_after_open = datetime(2026, 8, 31, 14, 50, tzinfo=ET)
+    assert DELL_EVENT.runup_viable(monday_after_open)
+    assert not DELL_EVENT.crush_viable(monday_after_open)
+    tuesday_late = datetime(2026, 9, 1, 15, 40, tzinfo=ET)
+    assert not DELL_EVENT.runup_viable(tuesday_late)  # entries end 13:00 event day
+    assert DELL_EVENT.crush_viable(tuesday_late)
+
+
+def test_event_view_parser_and_failopen():
+    from alpaca.agents.desk import parse_event_view
+
+    ok = parse_event_view('{"trade_runup": false, "trade_crush": true, "note": "thin window"}')
+    assert ok == {"trade_runup": False, "trade_crush": True, "note": "thin window"}
+    assert parse_event_view('{"trade_runup": "yes"}') is None
+    assert parse_event_view("gibberish") is None
+
+
+def test_debit_ladder_and_long_close_pnl(monkeypatch):
+    import alpaca.broker.executor as executor
+    from alpaca.broker.executor import debit_ladder_prices, submit_close, submit_open
+    from alpaca.config import ExecutorConfig
+    from alpaca.risk.ledger import Leg, Position
+
+    prices = debit_ladder_prices(1.50, max_debit_price=1.54)
+    assert prices[0] == 1.50 and prices[-1] <= 1.54
+    assert debit_ladder_prices(1.60, max_debit_price=1.55) == []
+
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+
+    legs = [
+        Leg("DELL260904P00133000", "buy", 1, 133.0, "put", "2026-09-04", 0.5, -0.3),
+        Leg("DELL260904C00147000", "buy", 1, 147.0, "call", "2026-09-04", 0.5, 0.3),
+    ]
+    pos = Position(
+        position_id="SLB-T", sleeve="B", underlying="DELL",
+        structure="event_runup_strangle", legs=legs, qty=1, credit=1.50,
+        width=14.0, max_loss=150.0, client_order_id="SLB-T",
+        opened_at="2026-08-31T14:50:00-04:00",
+    )
+
+    class LongBroker:
+        def __init__(self):
+            self.orders = {}
+
+        async def option_quotes(self, symbols):
+            return {s: {"bp": 0.73, "ap": 0.77} for s in symbols}  # each leg mid 0.75
+
+        async def place_option_order(self, qty, legs, limit_price, client_order_id):
+            order = {"id": f"o{len(self.orders)}", "client_order_id": client_order_id,
+                     "status": "filled", "filled_qty": str(qty),
+                     "filled_avg_price": limit_price}
+            self.orders[client_order_id] = order
+            return order
+
+        async def order_by_client_id(self, coid):
+            return self.orders[coid]
+
+        async def cancel_order(self, oid):
+            return {"ok": True}
+
+    broker = LongBroker()
+    memos = []
+    ok = asyncio.run(submit_open(broker, lambda e, d: memos.append(e), pos,
+                                 max_debit_price=1.55))
+    assert ok and pos.status == "open"
+    assert abs(pos.credit - 1.50) < 1e-9        # debit paid at the mid
+    assert abs(pos.max_loss - 150.0) < 1e-9     # long structure risks the debit
+
+    ok = asyncio.run(submit_close(broker, lambda e, d: memos.append(e), pos, "runup_pre_print_exit"))
+    assert ok and pos.status == "closed"
+    # closing nets a 1.50 credit back: flat trade, zero realized
+    assert abs(pos.realized_pnl - 0.0) < 1e-9
+
+
+def test_graph_opens_dell_runup_on_prior_day(tmp_path, monkeypatch):
+    import alpaca.broker.executor as executor
+    from alpaca.config import ExecutorConfig
+
+    runup_now = datetime(2026, 8, 31, 14, 50, tzinfo=ET)
+    monkeypatch.setattr(graph_mod, "now_et", lambda: runup_now)
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+
+    class CalmDellBroker(FakeBroker):
+        async def option_chain(self, underlying, **kwargs):
+            if underlying == "DELL":
+                return synthetic_chain("DELL", 140.0, "2026-09-04", iv=0.35,
+                                       t_years=4 / 365, strikes=range(105, 176, 1))
+            return await super().option_chain(underlying, **kwargs)
+
+        async def option_quotes(self, symbols):
+            from alpaca.risk.bs import bs as _bs
+
+            out = await super().option_quotes(symbols)
+            for s in symbols:
+                if s.startswith("DELL"):  # quotes must match the calm chain
+                    strike = int(s[-8:]) / 1000.0
+                    mid = max(_bs(s[10] == "C", 140.0, strike, 4 / 365, 0.35).price, 0.02)
+                    out[s] = {"bp": round(mid - 0.02, 2), "ap": round(mid + 0.02, 2)}
+            return out
+
+        async def place_option_order(self, qty, legs, limit_price, client_order_id):
+            order = {"id": f"ord-{len(self.placed_orders)}",
+                     "client_order_id": client_order_id, "status": "filled",
+                     "filled_qty": str(qty), "filled_avg_price": limit_price,
+                     "limit_price": limit_price, "legs": legs}
+            self.placed_orders.append(order)
+            return order
+
+    services = make_services(tmp_path, broker=CalmDellBroker(), dry_run=False)
+    run(services)
+    b_open = [p for p in services.ledger.open_positions() if p.sleeve == "B"]
+    assert len(b_open) == 1
+    assert b_open[0].structure == "event_runup_strangle"
+    assert services.db.get_state("sleeveB:DELL:runup") == "opened"
+    assert services.db.get_state("sleeveB:DELL:crush") is None  # not its window
 
 
 def test_crush_time_exit_next_morning(tmp_path, monkeypatch):
@@ -116,12 +260,21 @@ def test_crush_time_exit_next_morning(tmp_path, monkeypatch):
 
     monkeypatch.setattr(graph_mod, "now_et", lambda: CRUSH_NOW)
     run(services)
-    assert [p for p in services.ledger.open_positions() if p.sleeve == "B"]
+    assert [
+        p for p in services.ledger.open_positions()
+        if p.sleeve == "B" and "crush" in p.structure
+    ]
 
     wednesday_morning = datetime(2026, 9, 2, 10, 5, tzinfo=ET)
     monkeypatch.setattr(graph_mod, "now_et", lambda: wednesday_morning)
     run(services)
-    b_open = [p for p in services.ledger.open_positions() if p.sleeve == "B"]
-    assert not b_open, "crush condor must be covered by the morning time exit"
-    closed = [p for p in services.ledger.all_positions() if p.sleeve == "B"][0]
+    crush_open = [
+        p for p in services.ledger.open_positions()
+        if p.sleeve == "B" and "crush" in p.structure
+    ]
+    assert not crush_open, "crush condor must be covered by the morning time exit"
+    closed = [
+        p for p in services.ledger.all_positions()
+        if p.sleeve == "B" and "crush" in p.structure
+    ][0]
     assert closed.close_reason in ("event_crush_exit", "profit_target_50pct")

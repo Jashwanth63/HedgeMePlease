@@ -143,7 +143,13 @@ def check_pre_trade(
         reasons.append(f"dte {proposal.dte} below minimum {RISK.min_entry_dte}")
 
     sleeve = getattr(proposal.position, "sleeve", "A")
-    per_trade_cap = SLEEVE_B.crush_max_loss if sleeve == "B" else RISK.per_trade_max_loss
+    if sleeve == "B":
+        structure = getattr(proposal.position, "structure", "")
+        per_trade_cap = (
+            SLEEVE_B.runup_max_debit if "runup" in structure else SLEEVE_B.crush_max_loss
+        )
+    else:
+        per_trade_cap = RISK.per_trade_max_loss
     if proposal.max_loss > per_trade_cap:
         reasons.append(
             f"per-trade max loss {proposal.max_loss:.0f} exceeds sleeve {sleeve} "

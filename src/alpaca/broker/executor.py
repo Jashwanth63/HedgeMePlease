@@ -131,16 +131,52 @@ def _filled_qty(order: Optional[dict]) -> int:
         return 0
 
 
-async def submit_open(mcp, memo, position: Position) -> bool:
+def is_long_structure(position: Position) -> bool:
+    """All legs bought: a debit position (e.g. the run-up strangle)."""
+    return all(leg.side == "buy" for leg in position.legs)
+
+
+def _max_loss_for(position: Position) -> float:
+    """Long structures risk exactly the debit paid (stored in credit);
+    credit structures risk width minus credit."""
+    if is_long_structure(position):
+        return round(position.credit * 100 * position.qty, 2)
+    return round((position.width - position.credit) * 100 * position.qty, 2)
+
+
+def debit_ladder_prices(mid_debit: float, max_debit_price: float) -> list[float]:
+    """Limit prices for an opening DEBIT order (long structures): start at the
+    mid and pay up by improve_step, never beyond the per-unit debit cap."""
+    prices: list[float] = []
+    for i in range(EXEC.max_improvements + 1):
+        price = round(mid_debit + EXEC.improve_step * i, 2)
+        if price > max_debit_price + 1e-9:
+            break
+        prices.append(price)
+    return prices
+
+
+async def submit_open(
+    mcp, memo, position: Position, max_debit_price: Optional[float] = None
+) -> bool:
+    """Work an opening order. Credit structures (net mid negative) concede
+    toward zero; debit structures (net mid positive, max_debit_price required)
+    pay up toward their cap. Fill handling adapts max_loss to the structure."""
     mid = await net_mid(mcp, position, closing=False)
-    if mid is None or mid >= 0:
-        memo("open_abandoned", {"position": position.position_id, "reason": "no usable credit mid"})
+    is_debit = max_debit_price is not None
+    if mid is None or (not is_debit and mid >= 0) or (is_debit and mid <= 0):
+        memo("open_abandoned", {"position": position.position_id, "reason": "no usable mid"})
         position.status = "abandoned"
         return False
 
-    prices = ladder_prices(mid, position.width)
+    if is_debit:
+        prices = debit_ladder_prices(mid, max_debit_price)
+        abandon_reason = "mid already above debit cap"
+    else:
+        prices = ladder_prices(mid, position.width)
+        abandon_reason = "mid already below credit floor"
     if not prices:
-        memo("open_abandoned", {"position": position.position_id, "reason": "mid already below credit floor"})
+        memo("open_abandoned", {"position": position.position_id, "reason": abandon_reason})
         position.status = "abandoned"
         return False
 
@@ -160,7 +196,7 @@ async def submit_open(mcp, memo, position: Position) -> bool:
             fill = order.get("filled_avg_price") if order else None
             if fill is not None:
                 position.credit = abs(float(fill))
-                position.max_loss = round((position.width - position.credit) * 100 * position.qty, 2)
+                position.max_loss = _max_loss_for(position)
             position.status = "open"
             position.client_order_id = coid
             memo("opened", {"position": position.position_id, "price": price, "fill": fill})
@@ -173,7 +209,7 @@ async def submit_open(mcp, memo, position: Position) -> bool:
             position.qty = partial
             if fill is not None:
                 position.credit = abs(float(fill))
-            position.max_loss = round((position.width - position.credit) * 100 * partial, 2)
+            position.max_loss = _max_loss_for(position)
             position.status = "open"
             position.client_order_id = coid
             memo("opened_partial", {"position": position.position_id, "filled_qty": partial, "fill": fill})
@@ -197,11 +233,15 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
         memo("close_no_quotes", {"position": position.position_id})
         return False
     position.status = "closing"
+    long_close = mid < 0  # closing an all-long structure nets a credit to us
 
     steps = EXEC.max_improvements + EXEC.close_extra_steps + 1
     stamp = now_et().strftime("%H%M%S")  # close ladders may rerun across cycles;
     for attempt in range(steps):        # client order ids must never repeat
-        price = round(max(mid, 0.01) + EXEC.improve_step * attempt, 2)
+        if long_close:
+            price = round(min(mid + EXEC.improve_step * attempt, -0.01), 2)
+        else:
+            price = round(max(mid, 0.01) + EXEC.improve_step * attempt, 2)
         coid = f"{position.position_id}-x{attempt}-{stamp}"
         try:
             await mcp.place_option_order(
@@ -214,16 +254,19 @@ async def submit_close(mcp, memo, position: Position, reason: str) -> bool:
         status, order = await _await_terminal(mcp, coid, EXEC.wait_seconds)
         if status == "filled":
             fill = order.get("filled_avg_price") if order else None
-            debit = abs(float(fill)) if fill is not None else price
+            exit_price = abs(float(fill)) if fill is not None else abs(price)
             position.status = "closed"
             position.closed_at = now_et().isoformat()
             position.close_order_id = coid
             position.close_reason = reason
-            position.exit_debit = debit
-            position.realized_pnl = round((position.credit - debit) * 100 * position.qty, 2)
+            position.exit_debit = exit_price
+            if long_close:  # proceeds received minus debit paid
+                position.realized_pnl = round((exit_price - position.credit) * 100 * position.qty, 2)
+            else:           # credit received minus buy-back debit
+                position.realized_pnl = round((position.credit - exit_price) * 100 * position.qty, 2)
             memo("closed", {
                 "position": position.position_id, "reason": reason,
-                "debit": debit, "realized_pnl": position.realized_pnl,
+                "exit_price": exit_price, "realized_pnl": position.realized_pnl,
             })
             return True
         final = await _confirmed_cancel(mcp, memo, order, coid)

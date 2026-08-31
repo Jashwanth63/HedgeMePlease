@@ -89,15 +89,18 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
 
     assert result.get("executed", {}).get("opened") is True
     assert broker.placed_orders, "no order reached the broker"
-    order = broker.placed_orders[0]
-    assert len(order["legs"]) == 4
-    assert float(order["limit_price"]) < 0, "opening condor must be a net credit"
+    condor_order = next(o for o in broker.placed_orders if len(o["legs"]) == 4)
+    assert float(condor_order["limit_price"]) < 0, "opening condor must be a net credit"
     open_pos = services.ledger.open_positions()
-    assert len(open_pos) == 1
-    assert open_pos[0].status == "open"
+    spy_pos = [p for p in open_pos if p.underlying == "SPY"]
+    assert len(spy_pos) == 1 and spy_pos[0].status == "open"
+    # Monday morning also sits inside DELL's run-up window; the event sleeve
+    # may legitimately hold a long strangle alongside the condor
+    for p in open_pos:
+        assert p.status == "open"
 
     stored = services.db.conn.execute(
-        "SELECT entry_context FROM trades WHERE trade_id=?", (open_pos[0].position_id,)
+        "SELECT entry_context FROM trades WHERE trade_id=?", (spy_pos[0].position_id,)
     ).fetchone()
     assert stored["entry_context"], "entry context must be stored with the fill"
 
@@ -106,7 +109,7 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
 
     marked = services.db.conn.execute(
         "SELECT last_cost, unrealized_pnl, marked_at FROM trades WHERE trade_id=?",
-        (open_pos[0].position_id,),
+        (spy_pos[0].position_id,),
     ).fetchone()
     assert marked["unrealized_pnl"] is not None, "manage must mark open positions every cycle"
     assert marked["marked_at"]

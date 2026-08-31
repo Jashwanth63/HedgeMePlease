@@ -19,7 +19,8 @@ from langgraph.graph import END, START, StateGraph
 from .agents import desk
 from .broker.executor import cost_to_close, submit_close, submit_open
 from .config import FLATTEN_AT, SLEEVE_B, SLEEVE_B_EVENTS, STRAT, now_et
-from .strategy.events import build_crush_condor
+from .broker.executor import is_long_structure
+from .strategy.events import build_crush_condor, build_runup_strangle
 from .data.db import Db
 from .model.har import best_forecast, should_demote
 from .model.volutils import daily_stats
@@ -158,6 +159,24 @@ def build_graph(services: Services, checkpointer=None):
                 await submit_close(services.broker, memo, pos, "expiry_day_close")
                 ledger.update(pos)
                 continue
+            if pos.sleeve == "B" and is_long_structure(pos):
+                # run-up strangle: unconditional exit before the print,
+                # early take-profit if the drift already paid
+                event = next((e for e in SLEEVE_B_EVENTS if e.symbol == pos.underlying), None)
+                cost = await cost_to_close(services.broker, pos)
+                proceeds = -cost if cost is not None else None
+                if proceeds is not None:
+                    ledger.mark_position(
+                        pos.position_id, round(-proceeds, 2),
+                        round((proceeds - pos.credit) * 100 * pos.qty, 2),
+                    )
+                if event and now >= event.runup_exit_by:
+                    await submit_close(services.broker, memo, pos, "runup_pre_print_exit")
+                    ledger.update(pos)
+                elif proceeds is not None and proceeds >= pos.credit * SLEEVE_B.runup_profit_mult:
+                    await submit_close(services.broker, memo, pos, "runup_profit_take")
+                    ledger.update(pos)
+                continue
             if pos.sleeve == "B":
                 event = next((e for e in SLEEVE_B_EVENTS if e.symbol == pos.underlying), None)
                 if event and now >= event.crush_exit_by:
@@ -187,11 +206,14 @@ def build_graph(services: Services, checkpointer=None):
         if not state.get("market_open") or state.get("action") != AccountAction.OK.value:
             return {}
         for event in SLEEVE_B_EVENTS:
-            if not (event.crush_entry_start <= now <= event.crush_entry_end):
+            phases = []
+            if event.runup_viable(now) and not services.db.get_state(f"sleeveB:{event.symbol}:runup"):
+                phases.append("runup")
+            if event.crush_viable(now) and not services.db.get_state(f"sleeveB:{event.symbol}:crush"):
+                phases.append("crush")
+            if not phases:
                 continue
-            status_key = f"sleeveB:{event.symbol}:crush"
-            if services.db.get_state(status_key):
-                continue
+
             # spots for the whole open book too: the stress grid inside the
             # risk check must see every existing position, not just this event
             needed = {event.symbol} | {p.underlying for p in ledger.open_positions()}
@@ -205,38 +227,80 @@ def build_graph(services: Services, checkpointer=None):
                 strike_price_lte=spot * 1.25 if spot else None,
             )
             contracts = parse_chain(event.symbol, payload)
-            proposal, diag = build_crush_condor(event, contracts, spot, now)
-            memo("event_crush_candidate", diag)
-            if proposal is None:
-                continue
-            verdict = check_pre_trade(
-                ledger.open_positions(), proposal, state.get("equity", 0.0),
-                ledger.hwm, ledger.day_anchor, ledger.halted, all_spots, now,
-            )
-            memo("event_risk_verdict", {
-                "symbol": event.symbol, "approved": verdict.approved,
-                "reasons": verdict.reasons, "position_id": proposal.position.position_id,
-            })
-            if not verdict.approved:
-                continue
-            try:
-                headlines = await services.broker.news(event.symbol)
-            except Exception:
-                headlines = []
-            vetoed, reason = await desk.news_veto(
-                event.symbol, proposal.summary(), diag, headlines, memo
-            )
-            memo("event_news_veto", {"symbol": event.symbol, "veto": vetoed, "reason": reason})
-            if vetoed:
-                continue
-            if services.dry_run:
-                memo("event_dry_run_would_open", proposal.summary())
-                services.db.set_state(status_key, "dry_run")
-                continue
-            opened = await submit_open(services.broker, memo, proposal.position)
-            if opened:
-                ledger.add(proposal.position, {"event": event.symbol, **diag})
-                services.db.set_state(status_key, "opened")
+
+            # the event analyst reasons over the viable phases at runtime;
+            # it may decline a viable phase, never enable a closed one
+            view_key = f"sleeveB:{event.symbol}:view:{now.date().isoformat()}"
+            view = services.db.get_state(view_key)
+            if view is None:
+                from .strategy.events import implied_move
+
+                move = implied_move(contracts, event.post_expiry, spot)
+                try:
+                    headlines = await services.broker.news(event.symbol)
+                except Exception:
+                    headlines = []
+                view = await desk.event_phase_view({
+                    "symbol": event.symbol,
+                    "event_time": event.event_time.isoformat(),
+                    "now": now.isoformat(),
+                    "viable_phases": phases,
+                    "hours_to_event": round((event.event_time - now).total_seconds() / 3600, 1),
+                    "runup_exit_by": event.runup_exit_by.isoformat(),
+                    "spot": spot,
+                    "implied_move": move,
+                    "implied_move_pct": round(move / spot, 4) if move and spot else None,
+                    "headlines": [str(h.get("headline", ""))[:160] for h in headlines[:8]],
+                }, memo)
+                services.db.set_state(view_key, view)
+                memo("event_phase_view", {"symbol": event.symbol, **view})
+
+            for phase in phases:
+                if not view.get(f"trade_{phase}", True):
+                    memo("event_phase_declined", {"symbol": event.symbol, "phase": phase,
+                                                  "note": view.get("note", "")})
+                    services.db.set_state(f"sleeveB:{event.symbol}:{phase}", "declined")
+                    continue
+                if phase == "runup":
+                    proposal, diag = build_runup_strangle(event, contracts, spot, now)
+                else:
+                    proposal, diag = build_crush_condor(event, contracts, spot, now)
+                memo(f"event_{phase}_candidate", diag)
+                if proposal is None:
+                    continue
+                verdict = check_pre_trade(
+                    ledger.open_positions(), proposal, state.get("equity", 0.0),
+                    ledger.hwm, ledger.day_anchor, ledger.halted, all_spots, now,
+                )
+                memo("event_risk_verdict", {
+                    "symbol": event.symbol, "phase": phase, "approved": verdict.approved,
+                    "reasons": verdict.reasons, "position_id": proposal.position.position_id,
+                })
+                if not verdict.approved:
+                    continue
+                if phase == "crush":
+                    try:
+                        headlines = await services.broker.news(event.symbol)
+                    except Exception:
+                        headlines = []
+                    vetoed, reason = await desk.news_veto(
+                        event.symbol, proposal.summary(), diag, headlines, memo
+                    )
+                    memo("event_news_veto", {"symbol": event.symbol, "veto": vetoed, "reason": reason})
+                    if vetoed:
+                        continue
+                status_key = f"sleeveB:{event.symbol}:{phase}"
+                if services.dry_run:
+                    memo("event_dry_run_would_open", proposal.summary())
+                    services.db.set_state(status_key, "dry_run")
+                    continue
+                max_debit = (SLEEVE_B.runup_max_debit / 100.0) if phase == "runup" else None
+                opened = await submit_open(
+                    services.broker, memo, proposal.position, max_debit_price=max_debit
+                )
+                if opened:
+                    ledger.add(proposal.position, {"event": event.symbol, "phase": phase, **diag})
+                    services.db.set_state(status_key, "opened")
         return {}
 
     async def decide_entry(state: CycleState) -> CycleState:

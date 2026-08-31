@@ -231,6 +231,52 @@ async def news_veto(
         return False, "agent error"
 
 
+EVENT_SYSTEM = (
+    "You are the event analyst on an automated options desk. For one scheduled, "
+    "date-verified earnings event, deterministic code has computed which phases are "
+    "still viable by the clock: a run-up long strangle (bought before the print, "
+    "sold before the release, harvesting the documented pre-earnings IV drift) and "
+    "an IV-crush condor (sold in the final minutes before the release, covered next "
+    "morning, harvesting the implied move overshoot). You decide whether to actually "
+    "take each viable phase given the context: time remaining, implied move and IV "
+    "level, quote quality, and headlines. You may DECLINE a viable phase; you can "
+    "never enable one the clock has closed. Decline the run-up when too little "
+    "drift window remains to matter; decline the crush when headlines suggest the "
+    "event is postponed or unusual. Reply with a single JSON object only: "
+    '{"trade_runup": true|false, "trade_crush": true|false, "note": "one sentence"}.'
+)
+
+
+def parse_event_view(raw: str) -> Optional[dict]:
+    obj = extract_json(raw)
+    if obj is None:
+        return None
+    if not isinstance(obj.get("trade_runup"), bool) or not isinstance(obj.get("trade_crush"), bool):
+        return None
+    return {
+        "trade_runup": obj["trade_runup"],
+        "trade_crush": obj["trade_crush"],
+        "note": str(obj.get("note", ""))[:300],
+    }
+
+
+async def event_phase_view(context: dict[str, Any], memo) -> dict:
+    """Fail-open: agent unavailable or unparseable means take viable phases."""
+    default = {"trade_runup": True, "trade_crush": True, "note": "agent unavailable, defaults"}
+    try:
+        raw = await _ask(EVENT_SYSTEM, json.dumps(context, default=str), memo, "event_analyst")
+        if raw is None:
+            return default
+        parsed = parse_event_view(raw)
+        if parsed is None:
+            memo("event_view_unparseable", {"raw": (raw or "")[:300]})
+            return default
+        return parsed
+    except Exception as exc:
+        memo("event_view_error", {"error": repr(exc)[:300]})
+        return default
+
+
 JOURNALIST_SYSTEM = (
     "You write the audit note for one cycle of an automated options desk. Given the "
     "structured cycle record, write two or three plain sentences a judge could read: "

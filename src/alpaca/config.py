@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -131,7 +131,12 @@ EARNINGS_EVENTS: tuple[tuple[datetime, str], ...] = (
 
 @dataclass(frozen=True)
 class EventTrade:
-    """One scheduled earnings event Sleeve B trades around."""
+    """One scheduled earnings event Sleeve B trades around.
+
+    Only the facts live here (symbol, verified event time, post-event expiry,
+    crush window). Phase viability is computed at runtime from the clock, and
+    the event-analyst agent may decline viable phases — never extend them.
+    """
     symbol: str
     event_time: datetime            # release moment (after close)
     post_expiry: str                # first expiry after the event
@@ -139,15 +144,41 @@ class EventTrade:
     crush_entry_end: datetime
     crush_exit_by: datetime         # cover next morning, unconditionally
 
+    @property
+    def runup_entry_start(self) -> datetime:
+        """Long premium may enter from the prior trading day's open."""
+        prior = self.event_time - timedelta(days=1)
+        while prior.weekday() >= 5:
+            prior -= timedelta(days=1)
+        return prior.replace(hour=9, minute=45, second=0, microsecond=0)
+
+    @property
+    def runup_entry_end(self) -> datetime:
+        """No fresh run-up entries within the final hours before the print."""
+        return self.event_time.replace(hour=13, minute=0, second=0, microsecond=0)
+
+    @property
+    def runup_exit_by(self) -> datetime:
+        """The strangle is sold before the print, unconditionally."""
+        return self.event_time.replace(hour=15, minute=0, second=0, microsecond=0)
+
+    def runup_viable(self, now: datetime) -> bool:
+        return self.runup_entry_start <= now <= self.runup_entry_end
+
+    def crush_viable(self, now: datetime) -> bool:
+        return self.crush_entry_start <= now <= self.crush_entry_end
+
 
 @dataclass(frozen=True)
 class SleeveBConfig:
-    budget: float = 700.0                  # total max loss across event positions
+    budget: float = 900.0                  # total max loss across event positions
     crush_max_loss: float = 350.0          # per crush condor
-    runup_max_debit: float = 200.0         # per run-up strangle (phase 2 of build)
+    runup_max_debit: float = 450.0         # per run-up strangle; earnings-week
+                                           # strangles on 100-300 dollar stocks cost 3-4.5
     crush_move_mult: float = 1.0           # shorts at >= 1x the implied move
     crush_profit_take: float = 0.50
     crush_loss_mult: float = 2.5
+    runup_profit_mult: float = 1.5         # sell the strangle early if it 1.5x's
     min_credit_frac: float = 0.10          # single-name event credit floor
     quote_spread_frac: float = 0.35        # single names quote wider than index ETFs
 
