@@ -1,5 +1,5 @@
-from alpacha.config import CLAMPS, STRAT
-from alpacha.agents.desk import (
+from alpaca.config import CLAMPS, STRAT
+from alpaca.agents.desk import (
     RegimeView,
     extract_json,
     parse_choice,

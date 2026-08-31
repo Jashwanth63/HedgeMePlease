@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from alpacha.strategy.gates import evaluate_gates
+from alpaca.strategy.gates import evaluate_gates
 
 from conftest import FIXED_NOW
 

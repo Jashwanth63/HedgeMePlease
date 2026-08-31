@@ -1,15 +1,15 @@
 """Command line entry points.
 
-alpacha status    account, book, drawdown state
-alpacha rv SPY    daily RV series, HAR forecast, walk-forward check
-alpacha preview   chain to candidates to risk verdict, no orders
-alpacha scan      one full dry-run graph cycle (no orders)
-alpacha once      one live graph cycle (places orders)
-alpacha loop      the daemon until contest end
-alpacha flatten   close every open position now
-alpacha panic     cancel all orders, flatten, halt
-alpacha unhalt    clear the halt after human review
-alpacha memos     tail the audit trail
+alpaca status    account, book, drawdown state
+alpaca rv SPY    daily RV series, HAR forecast, walk-forward check
+alpaca preview   chain to candidates to risk verdict, no orders
+alpaca scan      one full dry-run graph cycle (no orders)
+alpaca once      one live graph cycle (places orders)
+alpaca loop      the daemon until contest end
+alpaca flatten   close every open position now
+alpaca panic     cancel all orders, flatten, halt
+alpaca unhalt    clear the halt after human review
+alpaca memos     tail the audit trail
 """
 
 from __future__ import annotations
@@ -156,7 +156,7 @@ async def _flatten(halt: bool) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="alpacha")
+    parser = argparse.ArgumentParser(prog="alpaca")
     sub = parser.add_subparsers(dest="cmd", required=True)
     sub.add_parser("status")
     for name in ("rv", "preview"):

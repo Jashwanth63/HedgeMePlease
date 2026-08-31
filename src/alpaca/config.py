@@ -19,7 +19,7 @@ ET = ZoneInfo("America/New_York")
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_DIR = REPO_ROOT / "state"
-DB_PATH = STATE_DIR / "alpacha.db"
+DB_PATH = STATE_DIR / "alpaca.db"
 CHECKPOINT_DB = STATE_DIR / "graph_checkpoints.db"
 
 load_dotenv(REPO_ROOT / ".env")
@@ -155,5 +155,5 @@ def openrouter_config() -> tuple[str, str]:
     """Returns (api_key, model). Empty key means the agent desk is disabled."""
     return (
         os.environ.get("OPENROUTER_API_KEY", ""),
-        os.environ.get("OPENROUTER_MODEL", "anthropic/claude-sonnet-4.5"),
+        os.environ.get("OPENROUTER_MODEL", "deepseek/deepseek-v3.2"),
     )

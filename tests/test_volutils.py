@@ -1,7 +1,7 @@
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from alpacha.model.volutils import daily_stats, expected_move
+from alpaca.model.volutils import daily_stats, expected_move
 
 from conftest import FIXED_NOW, synthetic_bars
 

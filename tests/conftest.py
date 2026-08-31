@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo
 
 import pytest
 
-from alpacha.risk.bs import bs
+from alpaca.risk.bs import bs
 
 ET = ZoneInfo("America/New_York")
 

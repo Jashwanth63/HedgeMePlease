@@ -1,5 +1,5 @@
-from alpacha.config import RISK
-from alpacha.strategy.condor import build_candidates, parse_chain, pick_near_expiry
+from alpaca.config import RISK
+from alpaca.strategy.condor import build_candidates, parse_chain, pick_near_expiry
 
 from conftest import FIXED_NOW, synthetic_chain
 

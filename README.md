@@ -4,7 +4,7 @@
 
 Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window, harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — and lets a team of four LLM agents inform, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-Claude%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-63%20passing-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-63%20passing-brightgreen)
 
 ---
 
@@ -39,7 +39,7 @@ graph TD
         MCP[Alpaca MCP server<br/>stdio subprocess]
     end
     ALP[Alpaca paper API]
-    OR[OpenRouter · Claude]
+    OR[OpenRouter · DeepSeek]
 
     T --> RC
     RC -- kill --> FL --> JR
@@ -120,14 +120,14 @@ uv run pytest           # 63 tests, all offline, no keys needed
 
 | Command | What it does |
 |---|---|
-| `uv run alpacha status` | account, book, drawdown state |
-| `uv run alpacha rv SPY` | RV series, HAR forecast, walk-forward vs baselines |
-| `uv run alpacha preview SPY` | chain → candidates → risk verdict, no orders |
-| `uv run alpacha scan` | one full **dry-run** graph cycle |
-| `uv run alpacha once` | one live cycle (places orders) |
-| `uv run alpacha loop` | the daemon, until contest end |
-| `uv run alpacha flatten` / `panic` / `unhalt` | manual overrides |
-| `uv run alpacha memos` | tail the audit trail |
+| `uv run alpaca status` | account, book, drawdown state |
+| `uv run alpaca rv SPY` | RV series, HAR forecast, walk-forward vs baselines |
+| `uv run alpaca preview SPY` | chain → candidates → risk verdict, no orders |
+| `uv run alpaca scan` | one full **dry-run** graph cycle |
+| `uv run alpaca once` | one live cycle (places orders) |
+| `uv run alpaca loop` | the daemon, until contest end |
+| `uv run alpaca flatten` / `panic` / `unhalt` | manual overrides |
+| `uv run alpaca memos` | tail the audit trail |
 
 ## Tested like we mean it
 
@@ -144,4 +144,4 @@ Every component has offline tests with zero network and zero keys: the pricing e
 
 Per the hackathon FAQ, pre-window work is disclosed: strategy research, architecture design, and scaffolding were prepared before the scoring window; the official 100,000 paper account trades only within the window (Mon Aug 31 09:30 ET → equity marked EOD Thu Sep 3). Backtest-style validation here is limited to walk-forward forecaster evaluation; official P&L is the live paper account.
 
-Built with the official [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server), [LangGraph](https://github.com/langchain-ai/langgraph), and Claude via OpenRouter.
+Built with the official [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server), [LangGraph](https://github.com/langchain-ai/langgraph), and DeepSeek V3.2 via OpenRouter.

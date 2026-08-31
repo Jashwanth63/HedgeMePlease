@@ -1,5 +1,5 @@
-from alpacha.risk.ledger import Leg, Position
-from alpacha.risk.stress import position_pnl_under_shock, worst_cell
+from alpaca.risk.ledger import Leg, Position
+from alpaca.risk.stress import position_pnl_under_shock, worst_cell
 
 from conftest import FIXED_NOW
 

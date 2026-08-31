@@ -1,8 +1,8 @@
 import asyncio
 
-import alpacha.broker.executor as executor
-from alpacha.broker.executor import close_legs, ladder_prices, open_legs, submit_open
-from alpacha.config import ExecutorConfig
+import alpaca.broker.executor as executor
+from alpaca.broker.executor import close_legs, ladder_prices, open_legs, submit_open
+from alpaca.config import ExecutorConfig
 
 from test_stress import make_condor
 

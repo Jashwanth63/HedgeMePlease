@@ -1,5 +1,5 @@
-from alpacha.data.db import Db
-from alpacha.risk.ledger import Ledger, Leg, Position
+from alpaca.data.db import Db
+from alpaca.risk.ledger import Ledger, Leg, Position
 
 from conftest import FIXED_NOW
 
@@ -64,7 +64,7 @@ def test_memos_and_state(tmp_path):
 
 
 def test_forecast_vs_realized_join(tmp_path):
-    from alpacha.model.volutils import DayStats
+    from alpaca.model.volutils import DayStats
 
     db = Db(tmp_path / "t.db")
     db.conn.execute(

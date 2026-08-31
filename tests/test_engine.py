@@ -1,6 +1,6 @@
-from alpacha.config import RISK
-from alpacha.risk.engine import AccountAction, check_pre_trade, evaluate_account
-from alpacha.strategy.condor import build_candidates, parse_chain
+from alpaca.config import RISK
+from alpaca.risk.engine import AccountAction, check_pre_trade, evaluate_account
+from alpaca.strategy.condor import build_candidates, parse_chain
 
 from conftest import FIXED_NOW, synthetic_chain
 

@@ -1,6 +1,6 @@
 import math
 
-from alpacha.risk.bs import bs
+from alpaca.risk.bs import bs
 
 
 def test_put_call_parity():

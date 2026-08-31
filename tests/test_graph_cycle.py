@@ -6,10 +6,10 @@ and reach a dry-run execution, journaling everything to SQLite.
 
 import asyncio
 
-import alpacha.graph as graph_mod
-from alpacha.data.db import Db
-from alpacha.graph import Services, run_cycle
-from alpacha.risk.ledger import Ledger
+import alpaca.graph as graph_mod
+from alpaca.data.db import Db
+from alpaca.graph import Services, run_cycle
+from alpaca.risk.ledger import Ledger
 
 from conftest import FIXED_NOW, FakeBroker
 
@@ -58,8 +58,8 @@ def test_market_closed_skips_entries(tmp_path, monkeypatch):
 
 
 def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
-    import alpacha.broker.executor as executor
-    from alpacha.config import ExecutorConfig
+    import alpaca.broker.executor as executor
+    from alpaca.config import ExecutorConfig
 
     monkeypatch.setattr(graph_mod, "now_et", lambda: FIXED_NOW)
     monkeypatch.setattr(

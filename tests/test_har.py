@@ -1,7 +1,7 @@
 import math
 import random
 
-from alpacha.model.har import (
+from alpaca.model.har import (
     MIN_TRAIN,
     best_forecast,
     fallback_forecast,
@@ -9,7 +9,7 @@ from alpacha.model.har import (
     should_demote,
     walk_forward,
 )
-from alpacha.model.volutils import DayStats
+from alpaca.model.volutils import DayStats
 
 
 def synthetic_stats(n: int = 300, seed: int = 7) -> list[DayStats]:

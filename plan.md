@@ -1,7 +1,7 @@
 # Alpaca Iron Condor Options Trading Agent — Implementation Plan (v2)
 
 ## TL;DR
-An autonomous LangGraph agent on a light Azure VM, trading defined-risk Iron Condors on SPY and QQQ through the **official Alpaca MCP server** during the hackathon scoring window (Mon Aug 31 through equity mark at EOD Thu Sep 3). A deterministic core owns all money authority: drawdown ladder with a **3.5% kill switch**, per-trade and book-level caps, and a Black-Scholes **stress grid** veto. An **enhanced HAR-RV model** (leverage + jumps) forecasts realized vol; entries pass four gates (entry window, macro/earnings blackout, vol contango, IV at least 1.15x forecast RV). **Four Claude agents via OpenRouter** (regime analyst, proposer, news analyst, journalist) inform, choose within menus, veto, and narrate — all fail-open, never authoritative. Exits are mechanical: 50% profit take, 2.5x credit loss cut, full flatten Thursday 15:30 ET. State persists to SQLite, including LangGraph checkpoints.
+An autonomous LangGraph agent on a light Azure VM, trading defined-risk Iron Condors on SPY and QQQ through the **official Alpaca MCP server** during the hackathon scoring window (Mon Aug 31 through equity mark at EOD Thu Sep 3). A deterministic core owns all money authority: drawdown ladder with a **3.5% kill switch**, per-trade and book-level caps, and a Black-Scholes **stress grid** veto. An **enhanced HAR-RV model** (leverage + jumps) forecasts realized vol; entries pass four gates (entry window, macro/earnings blackout, vol contango, IV at least 1.15x forecast RV). **Four LLM agents via OpenRouter (default: DeepSeek V3.2)** (regime analyst, proposer, news analyst, journalist) inform, choose within menus, veto, and narrate — all fail-open, never authoritative. Exits are mechanical: 50% profit take, 2.5x credit loss cut, full flatten Thursday 15:30 ET. State persists to SQLite, including LangGraph checkpoints.
 
 Changes from v1 are marked **[v2]** with rationale.
 
@@ -66,7 +66,7 @@ HedgeMePlease/
 ├── README.md                  # submission-facing; pipeline flowchart lives here
 ├── pyproject.toml             # uv-managed; hatchling build
 ├── .env.example               # ALPACA_API_KEY/SECRET, OPENROUTER_API_KEY, ALPACA_MCP_DIR
-├── src/alpacha/
+├── src/alpaca/
 │   ├── config.py              # limits, strategy + executor params, stress cfg, calendar, clamps
 │   ├── graph.py               # LangGraph StateGraph: nodes, conditional edges, checkpointing
 │   ├── daemon.py              # APScheduler loop, RTH guard, graceful shutdown

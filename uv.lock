@@ -17,7 +17,7 @@ wheels = [
 ]
 
 [[package]]
-name = "alpacha"
+name = "alpaca"
 version = "0.2.0"
 source = { editable = "." }
 dependencies = [
