@@ -18,7 +18,8 @@ from langgraph.graph import END, START, StateGraph
 
 from .agents import desk
 from .broker.executor import cost_to_close, submit_close, submit_open
-from .config import FLATTEN_AT, SLEEVE_B, SLEEVE_B_EVENTS, STRAT, now_et
+from .config import FLATTEN_AT, SLEEVE_B, SLEEVE_B_EVENTS, SLEEVE_C, STRAT, now_et
+from .strategy.hedge import build_hedge_puts
 from .broker.executor import is_long_structure
 from .strategy.events import build_crush_condor, build_runup_strangle
 from .data.db import Db
@@ -158,6 +159,17 @@ def build_graph(services: Services, checkpointer=None):
             if expires_today and now.time() >= dtime(15, 15):
                 await submit_close(services.broker, memo, pos, "expiry_day_close")
                 ledger.update(pos)
+                continue
+            if pos.sleeve == "C":
+                # insurance: mark it, never manage it; it exits only via the
+                # expiry-day rule above or the contest flatten
+                cost = await cost_to_close(services.broker, pos)
+                if cost is not None:
+                    proceeds = -cost
+                    ledger.mark_position(
+                        pos.position_id, round(-proceeds, 2),
+                        round((proceeds - pos.credit) * 100 * pos.qty, 2),
+                    )
                 continue
             if pos.sleeve == "B" and is_long_structure(pos):
                 # run-up strangle: unconditional exit before the print,
@@ -306,6 +318,81 @@ def build_graph(services: Services, checkpointer=None):
                 if opened:
                     ledger.add(proposal.position, {"event": event.symbol, "phase": phase, **diag})
                     services.db.set_state(status_key, "opened")
+        return {}
+
+    async def sleeve_c(state: CycleState) -> CycleState:
+        """Insurance: the hedge analyst decides WHEN inside hard guardrails;
+        a code backstop guarantees protection before the largest event night."""
+        now = now_et()
+        if not state.get("market_open") or state.get("action") != AccountAction.OK.value:
+            return {}
+        if now.weekday() >= 3 or now >= FLATTEN_AT:  # pointless from Thursday on
+            return {}
+        if services.db.get_state("sleeveC:bought"):
+            return {}
+
+        open_pos = ledger.open_positions()
+        committed = sum(p.max_loss for p in open_pos)
+        upcoming = [
+            {"symbol": e.symbol, "hours_away": round((e.event_time - now).total_seconds() / 3600, 1)}
+            for e in SLEEVE_B_EVENTS if e.event_time > now
+        ]
+
+        backstop = now >= SLEEVE_C.backstop_time and committed >= SLEEVE_C.backstop_min_book
+        buy, note = False, ""
+        if backstop:
+            buy, note = True, "code backstop: loaded book ahead of the largest event night"
+            memo("hedge_backstop_buy", {"committed": committed})
+        else:
+            bucket = f"{now.date().isoformat()}T{now.hour}:{0 if now.minute < 30 else 30}"
+            view_key = f"sleeveC:view:{bucket}"
+            view = services.db.get_state(view_key)
+            if view is None:
+                view = await desk.hedge_view({
+                    "now": now.isoformat(),
+                    "book_committed_max_loss": committed,
+                    "open_positions": len(open_pos),
+                    "upcoming_event_nights": upcoming,
+                    "contest_flatten": FLATTEN_AT.isoformat(),
+                    "hedge_budget": SLEEVE_C.budget,
+                }, memo)
+                services.db.set_state(view_key, view)
+                memo("hedge_view", view)
+            buy, note = view.get("buy_now", False), view.get("note", "")
+        if not buy:
+            return {}
+
+        spot = (await services.broker.spots([SLEEVE_C.underlying])).get(SLEEVE_C.underlying, 0.0)
+        payload = await services.broker.option_chain(
+            SLEEVE_C.underlying,
+            expiration_date_gte=(now + timedelta(days=SLEEVE_C.dte_min)).date().isoformat(),
+            expiration_date_lte=(now + timedelta(days=SLEEVE_C.dte_max)).date().isoformat(),
+            strike_price_gte=spot * 0.90 if spot else None,
+            strike_price_lte=spot * 0.99 if spot else None,
+        )
+        contracts = parse_chain(SLEEVE_C.underlying, payload)
+        proposal, diag = build_hedge_puts(contracts, spot, now)
+        memo("hedge_candidate", {**diag, "reasoning": note})
+        if proposal is None:
+            return {}
+        needed = {SLEEVE_C.underlying} | {p.underlying for p in open_pos}
+        all_spots = await services.broker.spots(sorted(needed))
+        verdict = check_pre_trade(
+            open_pos, proposal, state.get("equity", 0.0),
+            ledger.hwm, ledger.day_anchor, ledger.halted, all_spots, now,
+        )
+        memo("hedge_risk_verdict", {"approved": verdict.approved, "reasons": verdict.reasons})
+        if not verdict.approved:
+            return {}
+        if services.dry_run:
+            memo("hedge_dry_run_would_open", proposal.summary())
+            services.db.set_state("sleeveC:bought", "dry_run")
+            return {}
+        max_debit = SLEEVE_C.budget / 100.0 / proposal.qty
+        opened = await submit_open(services.broker, memo, proposal.position, max_debit_price=max_debit)
+        if opened:
+            ledger.add(proposal.position, {"reasoning": note, "committed_at_buy": committed})
+            services.db.set_state("sleeveC:bought", "opened")
         return {}
 
     async def decide_entry(state: CycleState) -> CycleState:
@@ -576,6 +663,7 @@ def build_graph(services: Services, checkpointer=None):
     g.add_node("flatten", flatten)
     g.add_node("manage", manage)
     g.add_node("sleeve_b", sleeve_b)
+    g.add_node("sleeve_c", sleeve_c)
     g.add_node("decide_entry", decide_entry)
     g.add_node("gather", gather)
     g.add_node("regime", regime)
@@ -595,7 +683,8 @@ def build_graph(services: Services, checkpointer=None):
     )
     g.add_edge("flatten", "journal")
     g.add_edge("manage", "sleeve_b")
-    g.add_edge("sleeve_b", "decide_entry")
+    g.add_edge("sleeve_b", "sleeve_c")
+    g.add_edge("sleeve_c", "decide_entry")
     g.add_conditional_edges(
         "decide_entry",
         lambda s: "journal" if s.get("skip") else "gather",

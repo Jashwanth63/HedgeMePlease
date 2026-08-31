@@ -116,6 +116,14 @@ class FakeBroker:
                 strikes=range(lo, hi, step),
             )
         if kwargs.get("expiration_date_gte"):
+            lte = str(kwargs.get("expiration_date_lte") or "")
+            if lte and lte <= "2026-09-15":  # hedge-band request: next-week expiry
+                lo = int(spot * 0.88) // 5 * 5
+                hi = int(spot * 1.00) // 5 * 5 + 5
+                return synthetic_chain(
+                    underlying, spot, "2026-09-09", iv=0.15, t_years=9 / 365,
+                    strikes=range(lo, hi, 5),
+                )
             lo = int(spot * 0.95) // 5 * 5
             hi = int(spot * 1.05) // 5 * 5 + 5
             return synthetic_chain(
@@ -138,8 +146,17 @@ class FakeBroker:
             und, yymmdd, cp = m.groups()
             strike = int(s[-8:]) / 1000.0
             spot = self.spot_map.get(und, 650.0)
-            t = 3 / 365 if yymmdd in ("260903", "260904") else 30 / 365
-            iv = 0.65 if und in ("DELL", "AVGO") else 0.30  # matches the fake chains
+            from datetime import date
+            expiry = date(2000 + int(yymmdd[:2]), int(yymmdd[2:4]), int(yymmdd[4:]))
+            t = max((expiry - FIXED_NOW.date()).days, 1) / 365
+            if und in ("DELL", "AVGO"):
+                iv = 0.65
+            elif yymmdd == "260909":
+                iv = 0.15  # matches the hedge-band chain
+            elif yymmdd == "260930":
+                iv = 0.32  # matches the far chain
+            else:
+                iv = 0.30
             mid = max(bs(cp == "C", spot, strike, t, iv).price, 0.02)
             out[s] = {"bp": round(mid - 0.02, 2), "ap": round(mid + 0.02, 2)}
         return out

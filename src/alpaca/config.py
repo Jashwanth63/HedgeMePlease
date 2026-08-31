@@ -204,6 +204,22 @@ SLEEVE_B_EVENTS: tuple[EventTrade, ...] = (
 
 SLEEVE_B = SleeveBConfig()
 
+
+@dataclass(frozen=True)
+class SleeveCConfig:
+    """Insurance: far OTM SPY puts. The hedge analyst decides when; code
+    guarantees a backstop purchase before the biggest event night."""
+    budget: float = 150.0                  # total debit, the sleeve's whole risk
+    underlying: str = "SPY"
+    otm_band: tuple[float, float] = (0.03, 0.05)   # strike 3-5 percent below spot
+    dte_min: int = 4
+    dte_max: int = 11                      # next-week expiry keeps resale value
+    backstop_time: datetime = datetime(2026, 9, 2, 10, 0, tzinfo=ET)
+    backstop_min_book: float = 600.0       # committed max loss that forces the buy
+
+
+SLEEVE_C = SleeveCConfig()
+
 ENTRY_WINDOWS: dict[int, tuple[time, time]] = {
     0: (time(9, 45), time(15, 30)),   # Monday
     1: (time(9, 45), time(15, 30)),   # Tuesday

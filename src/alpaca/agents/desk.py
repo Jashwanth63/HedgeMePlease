@@ -277,6 +277,48 @@ async def event_phase_view(context: dict[str, Any], memo) -> dict:
         return default
 
 
+HEDGE_SYSTEM = (
+    "You are the hedge analyst on an automated options desk whose book sells "
+    "defined-risk premium (short volatility). You control one small insurance "
+    "purchase: far out-of-the-money SPY puts within a fixed tiny budget, bought at "
+    "most once. The reasoning you apply: the book profits from calm and takes its "
+    "capped worst case in a gap, so insurance is worth owning when meaningful risk "
+    "is deployed, especially ahead of known event nights (earnings after the close, "
+    "major macro data), and it is cheapest when implied volatility is low, so "
+    "waiting for stress to buy it defeats the purpose. Decline for now when the "
+    "book is nearly empty and no event night is imminent, since the premium would "
+    "bleed with little to protect. You decide WHEN, never whether the budget or "
+    "structure changes; code enforces a backstop purchase before the largest event "
+    "regardless. Reply with a single JSON object only: "
+    '{"buy_now": true|false, "note": "one sentence of reasoning"}.'
+)
+
+
+def parse_hedge_view(raw: str) -> Optional[dict]:
+    obj = extract_json(raw)
+    if obj is None or not isinstance(obj.get("buy_now"), bool):
+        return None
+    return {"buy_now": obj["buy_now"], "note": str(obj.get("note", ""))[:300]}
+
+
+async def hedge_view(context: dict[str, Any], memo) -> dict:
+    """Fail-open to NOT buying: silence must not spend money. The code-level
+    backstop guarantees protection exists before the big event night anyway."""
+    default = {"buy_now": False, "note": "agent unavailable; deferring to backstop"}
+    try:
+        raw = await _ask(HEDGE_SYSTEM, json.dumps(context, default=str), memo, "hedge_analyst")
+        if raw is None:
+            return default
+        parsed = parse_hedge_view(raw)
+        if parsed is None:
+            memo("hedge_view_unparseable", {"raw": (raw or "")[:300]})
+            return default
+        return parsed
+    except Exception as exc:
+        memo("hedge_view_error", {"error": repr(exc)[:300]})
+        return default
+
+
 JOURNALIST_SYSTEM = (
     "You write the audit note for one cycle of an automated options desk. Given the "
     "structured cycle record, write two or three plain sentences a judge could read: "

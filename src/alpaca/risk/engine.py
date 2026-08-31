@@ -158,9 +158,14 @@ def check_pre_trade(
 
     if len(open_positions) >= RISK.max_positions:
         reasons.append(f"position count {len(open_positions)} at cap {RISK.max_positions}")
-    same_und = [p for p in open_positions if p.underlying == proposal.underlying]
+    # concentration counts within a sleeve: the insurance put on SPY must not
+    # be blocked by Sleeve A's SPY condors — they are opposite-sign exposures
+    same_und = [
+        p for p in open_positions
+        if p.underlying == proposal.underlying and p.sleeve == sleeve
+    ]
     if len(same_und) >= RISK.max_positions_per_underlying:
-        reasons.append(f"{proposal.underlying} already has {len(same_und)} positions")
+        reasons.append(f"{proposal.underlying} already has {len(same_und)} {sleeve}-sleeve positions")
 
     sleeve_budget = SLEEVE_B.budget if sleeve == "B" else RISK.sleeve_budget
     committed = sum(p.max_loss for p in open_positions if p.sleeve == sleeve)
