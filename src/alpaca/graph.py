@@ -267,6 +267,11 @@ def build_graph(services: Services, checkpointer=None):
                     proposal, diag = build_crush_condor(event, contracts, spot, now)
                 memo(f"event_{phase}_candidate", diag)
                 if proposal is None:
+                    if "debit cap" in str(diag.get("reject", "")):
+                        # structurally unaffordable at our size; premium will not
+                        # shrink an order of magnitude, stop retrying every cycle
+                        services.db.set_state(f"sleeveB:{event.symbol}:{phase}", "unaffordable")
+                        memo("event_phase_unaffordable", {"symbol": event.symbol, "phase": phase})
                     continue
                 verdict = check_pre_trade(
                     ledger.open_positions(), proposal, state.get("equity", 0.0),
