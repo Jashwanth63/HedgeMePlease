@@ -228,6 +228,8 @@ def main() -> None:
     sub.add_parser("unhalt")
     memos_p = sub.add_parser("memos")
     memos_p.add_argument("--limit", type=int, default=30)
+    mon_p = sub.add_parser("monitor")
+    mon_p.add_argument("--port", type=int, default=8080)
     args = parser.parse_args()
 
     if args.cmd == "report":
@@ -258,6 +260,9 @@ def main() -> None:
         db = Db()
         for row in reversed(db.recent_memos(args.limit)):
             print(json.dumps(row, default=str))
+    elif args.cmd == "monitor":
+        from .monitor import serve
+        serve(args.port)
 
 
 if __name__ == "__main__":
