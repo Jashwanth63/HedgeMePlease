@@ -126,10 +126,18 @@ async def _preview(symbol: str) -> None:
 
 
 async def _cycle(dry_run: bool) -> None:
+    from .graph import acquire_checkpointer, build_graph
+
     services = _services(dry_run=dry_run)
-    async with AlpacaMCP() as mcp:
-        services.broker = mcp
-        result = await run_cycle(services)
+    cm, checkpointer = await acquire_checkpointer(services.db.memo)
+    graph = build_graph(services, checkpointer)
+    try:
+        async with AlpacaMCP() as mcp:
+            services.broker = mcp
+            result = await run_cycle(services, graph)
+    finally:
+        if cm is not None:
+            await cm.__aexit__(None, None, None)
     print(json.dumps({k: v for k, v in result.items() if k != "evidence"}, indent=2, default=str))
 
 

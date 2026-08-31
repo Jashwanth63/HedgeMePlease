@@ -63,6 +63,7 @@ class StrategyConfig:
     far_dte_min: int = 21
     far_dte_max: int = 45
     forecast_horizon_days: int = 2
+    entry_cooldown_min: int = 45           # minimum spacing between new positions
 
 
 @dataclass(frozen=True)

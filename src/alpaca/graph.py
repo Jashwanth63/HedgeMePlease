@@ -162,6 +162,14 @@ def build_graph(services: Services, checkpointer=None):
             return {"skip": f"account {state.get('action')}"}
         if now >= FLATTEN_AT:
             return {"skip": "past contest flatten time"}
+        last_entry = services.db.get_state("last_entry_at")
+        if last_entry:
+            from datetime import datetime as _dt
+
+            elapsed_min = (now - _dt.fromisoformat(last_entry)).total_seconds() / 60.0
+            if elapsed_min < STRAT.entry_cooldown_min:
+                remaining = STRAT.entry_cooldown_min - elapsed_min
+                return {"skip": f"entry cooldown, {remaining:.0f}m remaining"}
         return {}
 
     async def gather(state: CycleState) -> CycleState:
@@ -350,6 +358,7 @@ def build_graph(services: Services, checkpointer=None):
         opened = await submit_open(services.broker, memo, target.position)
         if opened:
             ledger.add(target.position, entry_context)
+            services.db.set_state("last_entry_at", now_et().isoformat())
         return {"executed": {"opened": opened, **target.summary()}}
 
     async def journal(state: CycleState) -> CycleState:
@@ -427,6 +436,23 @@ def build_graph(services: Services, checkpointer=None):
     g.add_edge("journal", END)
 
     return g.compile(checkpointer=checkpointer)
+
+
+async def acquire_checkpointer(memo=None):
+    """AsyncSqliteSaver for cycle checkpoints, or (None, None) with a logged reason."""
+    from .config import CHECKPOINT_DB
+
+    try:
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        CHECKPOINT_DB.parent.mkdir(parents=True, exist_ok=True)
+        cm = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB))
+        saver = await cm.__aenter__()
+        return cm, saver
+    except Exception as exc:
+        if memo is not None:
+            memo("checkpointer_unavailable", {"error": repr(exc)[:200]})
+        return None, None
 
 
 async def run_cycle(services: Services, graph=None, thread_suffix: str = "") -> dict:

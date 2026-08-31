@@ -30,14 +30,9 @@ async def main_async(dry_run: bool = False) -> None:
     db = Db()
     services = Services(broker=None, db=db, ledger=Ledger(db), dry_run=dry_run)
 
-    checkpointer_cm = None
-    try:
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+    from .graph import acquire_checkpointer
 
-        checkpointer_cm = AsyncSqliteSaver.from_conn_string(str(CHECKPOINT_DB))
-        checkpointer = await checkpointer_cm.__aenter__()
-    except Exception:
-        checkpointer = None
+    checkpointer_cm, checkpointer = await acquire_checkpointer(db.memo)
     graph = build_graph(services, checkpointer)
 
     stop = asyncio.Event()

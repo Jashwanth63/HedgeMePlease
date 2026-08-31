@@ -93,3 +93,11 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
     open_pos = services.ledger.open_positions()
     assert len(open_pos) == 1
     assert open_pos[0].status == "open"
+
+    stored = services.db.conn.execute(
+        "SELECT entry_context FROM trades WHERE trade_id=?", (open_pos[0].position_id,)
+    ).fetchone()
+    assert stored["entry_context"], "entry context must be stored with the fill"
+
+    second = run(services)
+    assert str(second.get("skip", "")).startswith("entry cooldown"), second.get("skip")
