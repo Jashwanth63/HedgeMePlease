@@ -194,8 +194,15 @@ VETO_SYSTEM = (
     "concrete, dated catalyst likely to cause an outsized move before exit: an "
     "unscheduled central bank action, a major geopolitical escalation, an unexpected "
     "mega-cap event inside the window, a credit event. Routine commentary and already "
-    "scheduled, already known events are NOT veto reasons. Be conservative with "
-    'vetoes. Reply with a single JSON object only: {"veto": true|false, "reason": "..."}.'
+    "scheduled, already known events are NOT veto reasons. Some proposals are event "
+    "trades: their structure field starts with 'event_'. For those the scheduled "
+    "earnings named in the trade IS the deliberate thesis (defined-risk volatility "
+    "crush harvesting), so the event's existence, size of implied move, or proximity "
+    "must NEVER be your veto reason. For event trades veto only on risks outside the "
+    "thesis: the event postponed or moved, halt or delisting risk, same-window M&A or "
+    "regulatory action, or a second unrelated catalyst inside the hold. Be "
+    "conservative with vetoes. Reply with a single JSON object only: "
+    '{"veto": true|false, "reason": "..."}.'
 )
 
 

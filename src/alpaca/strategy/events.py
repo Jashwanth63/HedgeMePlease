@@ -41,17 +41,23 @@ def implied_move(contracts: list[Contract], expiry: str, spot: float) -> Optiona
     return None
 
 
-def _nearest_at_or_beyond(
-    contracts: list[Contract], expiry: str, opt_type: str, boundary: float, below: bool
-) -> Optional[Contract]:
+def _shorts_at_or_beyond(
+    contracts: list[Contract], expiry: str, opt_type: str, boundary: float, below: bool, n: int = 3
+) -> list[Contract]:
+    """The n qualifying short strikes at or beyond the boundary, nearest first.
+
+    Pre-print quote churn can kill the nearest strike on one side only; picking
+    each side's single nearest then pairs a close short with a far one — a
+    directional bet wearing a condor. The builder needs alternatives per side
+    so it can choose the delta-balanced pairing.
+    """
     pool = [
         c for c in contracts
         if c.expiry == expiry and c.opt_type == opt_type and _quote_ok(c)
         and (c.strike <= boundary if below else c.strike >= boundary)
     ]
-    if not pool:
-        return None
-    return max(pool, key=lambda c: c.strike) if below else min(pool, key=lambda c: c.strike)
+    pool.sort(key=lambda c: -c.strike if below else c.strike)
+    return pool[:n]
 
 
 def _wing(contracts: list[Contract], short: Contract, width: float) -> Optional[Contract]:
@@ -154,7 +160,15 @@ def build_crush_condor(
     contracts: list[Contract],
     spot: float,
     now: datetime,
+    max_abs_delta: Optional[float] = None,
 ) -> tuple[Optional[Proposal], dict]:
+    """Among every valid strike pairing, take the most delta-balanced condor.
+
+    A crush condor's edge is the vol collapse, not direction, so of the
+    candidates that clear the credit floor and loss cap we sell the one whose
+    net dollar delta is smallest — and refuse outright if none fits inside
+    max_abs_delta (the cluster's raw cap; hit live on DELL Sep 1 at -16,397).
+    """
     diag: dict = {"symbol": event.symbol, "phase": "crush"}
     if spot <= 0:
         diag["reject"] = "no spot"
@@ -168,58 +182,77 @@ def build_crush_condor(
     diag["implied_move_pct"] = round(move / spot, 4)
 
     offset = move * SLEEVE_B.crush_move_mult
-    short_put = _nearest_at_or_beyond(contracts, event.post_expiry, "put", spot - offset, below=True)
-    short_call = _nearest_at_or_beyond(contracts, event.post_expiry, "call", spot + offset, below=False)
-    if not (short_put and short_call):
+    short_puts = _shorts_at_or_beyond(contracts, event.post_expiry, "put", spot - offset, below=True)
+    short_calls = _shorts_at_or_beyond(contracts, event.post_expiry, "call", spot + offset, below=False)
+    if not (short_puts and short_calls):
         diag["reject"] = "no short strikes beyond the implied move"
         return None, diag
 
-    for width in (5.0, 4.0, 3.0):
-        put_wing = _wing(contracts, short_put, width)
-        call_wing = _wing(contracts, short_call, width)
-        if not (put_wing and call_wing):
-            continue
-        eff_width = max(short_put.strike - put_wing.strike, call_wing.strike - short_call.strike)
-        credit = (short_put.mid - put_wing.mid) + (short_call.mid - call_wing.mid)
-        if credit < SLEEVE_B.min_credit_frac * eff_width:
-            diag[f"width_{width:.0f}"] = f"credit {credit:.2f} under floor"
-            continue
-        unit_loss = (eff_width - credit) * 100.0
-        if unit_loss <= 0 or unit_loss > SLEEVE_B.crush_max_loss:
-            diag[f"width_{width:.0f}"] = f"unit loss {unit_loss:.0f} outside cap"
-            continue
+    best = None  # (abs_delta, -credit, parts)
+    rejects: dict[str, int] = {}
+    for short_put in short_puts:
+        for short_call in short_calls:
+            for width in (5.0, 4.0, 3.0):
+                put_wing = _wing(contracts, short_put, width)
+                call_wing = _wing(contracts, short_call, width)
+                if not (put_wing and call_wing):
+                    rejects["no_wing"] = rejects.get("no_wing", 0) + 1
+                    continue
+                eff_width = max(short_put.strike - put_wing.strike, call_wing.strike - short_call.strike)
+                credit = (short_put.mid - put_wing.mid) + (short_call.mid - call_wing.mid)
+                if credit < SLEEVE_B.min_credit_frac * eff_width:
+                    rejects["credit_floor"] = rejects.get("credit_floor", 0) + 1
+                    continue
+                unit_loss = (eff_width - credit) * 100.0
+                if unit_loss <= 0 or unit_loss > SLEEVE_B.crush_max_loss:
+                    rejects["loss_cap"] = rejects.get("loss_cap", 0) + 1
+                    continue
 
-        legs = [
-            _leg(short_put, "sell", spot, now),
-            _leg(put_wing, "buy", spot, now),
-            _leg(short_call, "sell", spot, now),
-            _leg(call_wing, "buy", spot, now),
-        ]
-        net_delta = sum(
-            (1 if l.side == "buy" else -1) * l.entry_delta * 100.0 * spot for l in legs
-        )
-        net_vega = 0.0
-        for l in legs:
-            t = t_years(l.expiry, now)
-            est = bs(l.opt_type == "call", spot, l.strike, t, l.entry_iv)
-            net_vega += (1 if l.side == "buy" else -1) * est.vega * 0.01 * 100.0
+                legs = [
+                    _leg(short_put, "sell", spot, now),
+                    _leg(put_wing, "buy", spot, now),
+                    _leg(short_call, "sell", spot, now),
+                    _leg(call_wing, "buy", spot, now),
+                ]
+                net_delta = sum(
+                    (1 if l.side == "buy" else -1) * l.entry_delta * 100.0 * spot for l in legs
+                )
+                if max_abs_delta is not None and abs(net_delta) > max_abs_delta:
+                    rejects["delta_cap"] = rejects.get("delta_cap", 0) + 1
+                    continue
+                key = (abs(net_delta), -credit)
+                if best is None or key < best[0]:
+                    best = (key, legs, credit, eff_width, unit_loss, net_delta)
 
-        position_id = f"SLB-{event.symbol}-{event.post_expiry.replace('-', '')}-{now.strftime('%m%d%H%M%S')}"
-        position = Position(
-            position_id=position_id, sleeve="B", underlying=event.symbol,
-            structure="event_crush_condor", legs=legs, qty=1,
-            credit=round(credit, 2), width=eff_width,
-            max_loss=round(unit_loss, 2), client_order_id=position_id,
-            opened_at=now.isoformat(),
+    diag["rejected_pairings"] = rejects
+    if best is None:
+        diag["reject"] = (
+            "no delta-balanced condor cleared credit floor and loss cap"
+            if rejects.get("delta_cap") else "no width satisfied credit floor and loss cap"
         )
-        proposal = Proposal(
-            underlying=event.symbol, structure="event_crush_condor", legs=legs, qty=1,
-            credit=round(credit, 2), width=eff_width, max_loss=round(unit_loss, 2),
-            net_delta_dollars=net_delta, net_vega_dollars=net_vega,
-            dte=dte_of(event.post_expiry, now), position=position,
-        )
-        diag["proposal"] = proposal.summary()
-        return proposal, diag
+        return None, diag
 
-    diag.setdefault("reject", "no width satisfied credit floor and loss cap")
-    return None, diag
+    _, legs, credit, eff_width, unit_loss, net_delta = best
+    net_vega = 0.0
+    for l in legs:
+        t = t_years(l.expiry, now)
+        est = bs(l.opt_type == "call", spot, l.strike, t, l.entry_iv)
+        net_vega += (1 if l.side == "buy" else -1) * est.vega * 0.01 * 100.0
+
+    position_id = f"SLB-{event.symbol}-{event.post_expiry.replace('-', '')}-{now.strftime('%m%d%H%M%S')}"
+    position = Position(
+        position_id=position_id, sleeve="B", underlying=event.symbol,
+        structure="event_crush_condor", legs=legs, qty=1,
+        credit=round(credit, 2), width=eff_width,
+        max_loss=round(unit_loss, 2), client_order_id=position_id,
+        opened_at=now.isoformat(),
+    )
+    proposal = Proposal(
+        underlying=event.symbol, structure="event_crush_condor", legs=legs, qty=1,
+        credit=round(credit, 2), width=eff_width, max_loss=round(unit_loss, 2),
+        net_delta_dollars=net_delta, net_vega_dollars=net_vega,
+        dte=dte_of(event.post_expiry, now), position=position,
+    )
+    diag["proposal"] = proposal.summary()
+    diag["net_delta"] = round(net_delta)
+    return proposal, diag

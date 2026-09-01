@@ -278,3 +278,38 @@ def test_crush_time_exit_next_morning(tmp_path, monkeypatch):
         if p.sleeve == "B" and "crush" in p.structure
     ][0]
     assert closed.close_reason in ("event_crush_exit", "profit_target_50pct")
+
+
+def test_crush_steps_put_out_when_near_call_quote_dies():
+    """Sep 1 live: one side's nearest strike lost its quote, the old builder
+    paired a close put with a far call and shipped -16K of delta. The builder
+    must rebalance the other side instead."""
+    contracts = dell_contracts()
+    move = implied_move(contracts, "2026-09-04", 140.0)
+    call_strikes = sorted(c.strike for c in contracts
+                          if c.opt_type == "call" and c.strike >= 140.0 + move)
+    put_strikes = sorted((c.strike for c in contracts
+                          if c.opt_type == "put" and c.strike <= 140.0 - move), reverse=True)
+    from dataclasses import replace
+
+    contracts = [  # kill the nearest qualifying call's quote
+        replace(c, bid=0.0) if c.opt_type == "call" and c.strike == call_strikes[0] else c
+        for c in contracts
+    ]
+    proposal, diag = build_crush_condor(DELL_EVENT, contracts, 140.0, CRUSH_NOW,
+                                        max_abs_delta=10_000.0)
+    assert proposal is not None, diag
+    short_put = next(l for l in proposal.legs if l.side == "sell" and l.opt_type == "put")
+    short_call = next(l for l in proposal.legs if l.side == "sell" and l.opt_type == "call")
+    assert short_call.strike >= call_strikes[1]      # dead strike unusable
+    assert short_put.strike < put_strikes[0]         # put stepped out to rebalance
+    assert abs(proposal.net_delta_dollars) <= 10_000.0
+    assert "net_delta" in diag
+
+
+def test_crush_refuses_when_no_pairing_fits_delta_cap():
+    proposal, diag = build_crush_condor(DELL_EVENT, dell_contracts(), 140.0, CRUSH_NOW,
+                                        max_abs_delta=1.0)
+    assert proposal is None
+    assert "delta-balanced" in diag["reject"]
+    assert diag["rejected_pairings"].get("delta_cap", 0) > 0

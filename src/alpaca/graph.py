@@ -276,7 +276,10 @@ def build_graph(services: Services, checkpointer=None):
                 if phase == "runup":
                     proposal, diag = build_runup_strangle(event, contracts, spot, now)
                 else:
-                    proposal, diag = build_crush_condor(event, contracts, spot, now)
+                    proposal, diag = build_crush_condor(
+                        event, contracts, spot, now,
+                        max_abs_delta=STRAT.cluster_delta_caps.get("single_name"),
+                    )
                 memo(f"event_{phase}_candidate", diag)
                 if proposal is None:
                     if "debit cap" in str(diag.get("reject", "")):
