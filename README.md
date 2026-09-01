@@ -4,7 +4,7 @@
 
 Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window, harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — and lets a team of four LLM agents inform, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-64%20passing-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-90%20passing-brightgreen)
 
 ---
 
@@ -115,7 +115,7 @@ Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-cred
 git clone https://github.com/alpacahq/alpaca-mcp-server ../alpaca-mcp-server
 uv sync --dev
 cp .env.example .env    # Alpaca paper keys + optional OpenRouter key
-uv run pytest           # 64 tests, all offline, no keys needed
+uv run pytest           # 90 tests, all offline, no keys needed
 ```
 
 | Command | What it does |
