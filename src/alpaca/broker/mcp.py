@@ -31,6 +31,48 @@ class McpToolError(RuntimeError):
         self.tool = tool
 
 
+def option_order_payload(
+    qty: int, legs: list[dict], limit_price: float, client_order_id: str
+) -> dict:
+    """Translate an order into the shape Alpaca accepts.
+
+    Alpaca's mleg order class requires 2-4 legs (API code 42210000, hit live
+    Sep 1); a lone option — the sleeve C hedge put — must go as a plain
+    single-leg order: symbol and side on the parent, unsigned limit price,
+    direction carried by the side. Signed prices are an mleg-only convention.
+    """
+    payload: dict[str, Any] = {
+        "qty": str(qty),
+        "type": "limit",
+        "time_in_force": "day",
+        "client_order_id": client_order_id,
+    }
+    if len(legs) == 1:
+        leg = legs[0]
+        if leg.get("position_intent") == "sell_to_open":
+            raise ValueError("single-leg sell_to_open is a naked short; refused")
+        payload.update(
+            {
+                "symbol": leg["symbol"],
+                "side": leg["side"],
+                "position_intent": leg.get("position_intent"),
+                "qty": str(qty * int(leg.get("ratio_qty", 1))),
+                "limit_price": f"{abs(limit_price):.2f}",
+            }
+        )
+    elif 2 <= len(legs) <= 4:
+        payload.update(
+            {
+                "limit_price": f"{limit_price:.2f}",
+                "order_class": "mleg",
+                "legs": legs,
+            }
+        )
+    else:
+        raise ValueError(f"option order needs 1-4 legs, got {len(legs)}")
+    return payload
+
+
 class AlpacaMCP:
     """Async context manager owning one MCP session to the Alpaca server."""
 
@@ -204,18 +246,7 @@ class AlpacaMCP:
     async def place_option_order(
         self, qty: int, legs: list[dict], limit_price: float, client_order_id: str
     ) -> dict:
-        return await self.call(
-            "place_option_order",
-            {
-                "qty": str(qty),
-                "type": "limit",
-                "time_in_force": "day",
-                "limit_price": f"{limit_price:.2f}",
-                "client_order_id": client_order_id,
-                "order_class": "mleg",
-                "legs": legs,
-            },
-        )
+        return await self.call("place_option_order", option_order_payload(qty, legs, limit_price, client_order_id))
 
     async def order_by_client_id(self, client_order_id: str) -> dict:
         return await self.call("get_order_by_client_id", {"client_order_id": client_order_id})

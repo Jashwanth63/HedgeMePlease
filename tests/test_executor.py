@@ -160,3 +160,49 @@ def test_submit_open_times_out_and_cancels(monkeypatch):
     assert pos.status == "abandoned"
     assert "open_abandoned" in memos
     assert memos.count("open_requote") >= 1
+
+
+def test_option_order_payload_single_leg_buy():
+    from alpaca.broker.mcp import option_order_payload
+
+    leg = {"symbol": "SPY260911P00738000", "ratio_qty": "1", "side": "buy",
+           "position_intent": "buy_to_open"}
+    p = option_order_payload(2, [leg], 1.17, "SLC-x")
+    assert p["symbol"] == "SPY260911P00738000"
+    assert p["side"] == "buy"
+    assert "order_class" not in p and "legs" not in p
+    assert p["limit_price"] == "1.17" and p["qty"] == "2"
+
+
+def test_option_order_payload_single_leg_close_price_unsigned():
+    from alpaca.broker.mcp import option_order_payload
+
+    leg = {"symbol": "SPY260911P00738000", "ratio_qty": "1", "side": "sell",
+           "position_intent": "sell_to_close"}
+    p = option_order_payload(1, [leg], -0.95, "SLC-x-close")
+    assert p["limit_price"] == "0.95"
+
+
+def test_option_order_payload_refuses_naked_short_and_bad_leg_counts():
+    import pytest
+
+    from alpaca.broker.mcp import option_order_payload
+
+    naked = {"symbol": "SPY260911P00738000", "ratio_qty": "1", "side": "sell",
+             "position_intent": "sell_to_open"}
+    with pytest.raises(ValueError):
+        option_order_payload(1, [naked], 1.0, "x")
+    with pytest.raises(ValueError):
+        option_order_payload(1, [], 1.0, "x")
+
+
+def test_option_order_payload_multi_leg_keeps_signed_credit():
+    from alpaca.broker.mcp import option_order_payload
+
+    legs = [{"symbol": f"SPY260903{cp}00{k}0000", "ratio_qty": "1", "side": s,
+             "position_intent": i}
+            for cp, k, s, i in (("P", 63, "sell", "sell_to_open"), ("P", 62, "buy", "buy_to_open"),
+                                ("C", 67, "sell", "sell_to_open"), ("C", 68, "buy", "buy_to_open"))]
+    p = option_order_payload(1, legs, -1.11, "SLA-x")
+    assert p["order_class"] == "mleg" and len(p["legs"]) == 4
+    assert p["limit_price"] == "-1.11"

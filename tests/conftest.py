@@ -165,11 +165,22 @@ class FakeBroker:
         return []
 
     async def place_option_order(self, qty, legs, limit_price, client_order_id) -> dict:
+        # Run the real payload translation, then enforce what the live API
+        # enforces: mleg must carry 2-4 legs, single-leg must carry symbol
+        # and side and a non-negative price (rejected live otherwise, 422).
+        from alpaca.broker.mcp import option_order_payload
+
+        payload = option_order_payload(qty, legs, limit_price, client_order_id)
+        if payload.get("order_class") == "mleg":
+            assert 2 <= len(payload["legs"]) <= 4, "mleg orders must have 2-4 legs"
+        else:
+            assert payload.get("symbol") and payload.get("side"), "single-leg needs symbol+side"
+            assert float(payload["limit_price"]) >= 0, "single-leg limit price is unsigned"
         order = {
             "id": f"ord-{len(self.placed_orders)}",
             "client_order_id": client_order_id,
             "status": "accepted",
-            "qty": str(qty),
+            "qty": payload["qty"],
             "legs": legs,
             "limit_price": limit_price,
         }
