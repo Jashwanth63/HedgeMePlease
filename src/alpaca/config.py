@@ -214,7 +214,9 @@ class SleeveCConfig:
     otm_band: tuple[float, float] = (0.03, 0.05)   # strike 3-5 percent below spot
     dte_min: int = 4
     dte_max: int = 11                      # next-week expiry keeps resale value
-    backstop_time: datetime = datetime(2026, 9, 2, 10, 0, tzinfo=ET)
+    backstop_time: datetime = datetime(2026, 9, 1, 14, 45, tzinfo=ET)  # pulled
+    # forward from Wed 10:00 on 2026-09-01: US-Iran escalation, term structure
+    # inverted on all four underlyings, DELL and AVGO nights still ahead
     backstop_min_book: float = 600.0       # committed max loss that forces the buy
 
 
