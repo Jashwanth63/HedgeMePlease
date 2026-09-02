@@ -153,8 +153,10 @@ class AlpacaMCP:
         return await self.call("get_clock")
 
     async def positions(self) -> list[dict]:
+        # the server wraps list payloads under "result" (verified live Sep 2;
+        # the old "positions" fallback silently returned [] forever)
         out = await self.call("get_all_positions")
-        return out if isinstance(out, list) else out.get("positions", [])
+        return out if isinstance(out, list) else out.get("result", out.get("positions", []))
 
     async def spots(self, symbols: list[str]) -> dict[str, float]:
         payload = await self.call(
@@ -255,5 +257,8 @@ class AlpacaMCP:
         return await self.call("cancel_order_by_id", {"order_id": order_id})
 
     async def open_orders(self) -> list[dict]:
+        # same "result" envelope as positions(). The old "orders" fallback made
+        # the daemon's startup stray sweep a no-op all week — discovered when a
+        # restart-orphaned requote rested through the AVGO print and filled.
         out = await self.call("get_orders", {"status": "open", "limit": 100, "nested": "true"})
-        return out if isinstance(out, list) else out.get("orders", [])
+        return out if isinstance(out, list) else out.get("result", out.get("orders", []))

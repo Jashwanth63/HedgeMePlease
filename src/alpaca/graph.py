@@ -110,6 +110,28 @@ def build_graph(services: Services, checkpointer=None):
             "drawdown": round(drawdown, 4),
             "budget_used": round(budget_consumed_frac(equity, ledger.hwm), 2),
         })
+
+        # the account must never hold anything the ledger cannot explain: an
+        # order can fill in the gap between a daemon death and its cancel (it
+        # happened with AVGO Sep 2), and only comparing books catches that
+        try:
+            from collections import Counter
+
+            broker_ct: Counter = Counter()
+            for p in await services.broker.positions():
+                if str(p.get("asset_class", "")) == "us_option":
+                    broker_ct[str(p.get("symbol"))] += abs(int(float(p.get("qty", 0))))
+            ledger_ct: Counter = Counter()
+            for pos in ledger.open_positions():
+                for leg in pos.legs:
+                    ledger_ct[leg.symbol] += pos.qty * leg.ratio_qty
+            if broker_ct != ledger_ct:
+                memo("reconciliation_alert", {
+                    "missing_in_ledger": dict(broker_ct - ledger_ct),
+                    "missing_at_broker": dict(ledger_ct - broker_ct),
+                })
+        except Exception as exc:
+            memo("reconciliation_error", {"error": repr(exc)[:200]})
         return {
             "now": now.isoformat(),
             "equity": equity,
@@ -161,8 +183,19 @@ def build_graph(services: Services, checkpointer=None):
                 ledger.update(pos)
                 continue
             if pos.sleeve == "C":
-                # insurance: mark it, never manage it; it exits only via the
-                # expiry-day rule above or the contest flatten
+                # insurance exists for the book. Once the rest of the book is
+                # flat and every event night's exposure window has passed, the
+                # put is no longer insurance but a naked directional bet —
+                # recover its residual value instead of bleeding to the flatten.
+                others = [p for p in ledger.open_positions()
+                          if p.position_id != pos.position_id]
+                events_done = now >= max(e.crush_exit_by for e in SLEEVE_B_EVENTS)
+                if not others and events_done:
+                    await submit_close(services.broker, memo, pos, "hedge_retired_book_flat")
+                    ledger.update(pos)
+                    continue
+                # otherwise: mark it, never manage it; it exits via the rule
+                # above, the expiry-day rule, or the contest flatten
                 cost = await cost_to_close(services.broker, pos)
                 if cost is not None:
                     proceeds = -cost

@@ -106,3 +106,69 @@ def test_backstop_buys_with_loaded_book(tmp_path, monkeypatch):
     assert len(hedges) == 1, "backstop must force the hedge before the event night"
     events = [m["event"] for m in services.db.recent_memos(60)]
     assert "hedge_backstop_buy" in events
+
+
+def _seed_hedge(services):
+    from alpaca.risk.ledger import Leg, Position
+
+    legs = [Leg("SPY260911P00738000", "buy", 1, 738.0, "put", "2026-09-11", 0.15, -0.10)]
+    pos = Position(
+        position_id="SLC-SEED", sleeve="C", underlying="SPY",
+        structure="hedge_puts", legs=legs, qty=1, credit=1.22, width=0.0,
+        max_loss=122.0, client_order_id="SLC-SEED",
+        opened_at="2026-09-01T15:23:29-04:00",
+    )
+    pos.status = "open"
+    services.ledger.add(pos)
+    return pos
+
+
+def test_hedge_retires_when_book_flat_and_events_done(tmp_path, monkeypatch):
+    import alpaca.broker.executor as executor
+    from alpaca.config import ExecutorConfig
+
+    thursday = datetime(2026, 9, 3, 10, 5, tzinfo=ET)  # after AVGO crush_exit_by
+    monkeypatch.setattr(graph_mod, "now_et", lambda: thursday)
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+    services = make_services(tmp_path, broker=_filling_broker(), dry_run=False)
+    _seed_hedge(services)
+
+    run(services)
+    assert not [p for p in services.ledger.open_positions() if p.sleeve == "C"]
+    closed = [p for p in services.ledger.all_positions() if p.sleeve == "C"][0]
+    assert closed.close_reason == "hedge_retired_book_flat"
+
+
+def test_hedge_stays_while_book_has_positions_or_events_pending(tmp_path, monkeypatch):
+    import alpaca.broker.executor as executor
+    from alpaca.config import ExecutorConfig
+
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+
+    # Wednesday morning: book flat but AVGO night still ahead — hold
+    wednesday = datetime(2026, 9, 2, 10, 35, tzinfo=ET)
+    monkeypatch.setattr(graph_mod, "now_et", lambda: wednesday)
+    (tmp_path / "a").mkdir()
+    services = make_services(tmp_path / "a", broker=_filling_broker(), dry_run=False)
+    _seed_hedge(services)
+    run(services)
+    assert [p for p in services.ledger.open_positions() if p.sleeve == "C"]
+
+    # Thursday after events, but another position still open — hold
+    thursday = datetime(2026, 9, 3, 10, 5, tzinfo=ET)
+    monkeypatch.setattr(graph_mod, "now_et", lambda: thursday)
+    (tmp_path / "b").mkdir()
+    services2 = make_services(tmp_path / "b", broker=_filling_broker(), dry_run=False)
+    _seed_hedge(services2)
+    seed = make_condor()
+    seed.position_id = seed.client_order_id = "SLA-STILL-OPEN"
+    seed.status = "open"
+    services2.ledger.add(seed)
+    run(services2)
+    assert [p for p in services2.ledger.open_positions() if p.sleeve == "C"]

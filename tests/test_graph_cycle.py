@@ -120,3 +120,24 @@ def test_live_cycle_places_order_via_fake_broker(tmp_path, monkeypatch):
     gates = third.get("gates") or {}
     spy_fails = (gates.get("SPY") or {}).get("failed", [])
     assert any("underlying_cooldown" in f for f in spy_fails), gates
+
+
+def test_reconciliation_alert_on_unknown_broker_position(tmp_path):
+    class DriftedBroker(FakeBroker):
+        async def positions(self):
+            return [{"symbol": "AVGO260904C00397500", "qty": "-1",
+                     "asset_class": "us_option"}]
+
+    services = make_services(tmp_path, broker=DriftedBroker())
+    run(services)
+    alerts = [m for m in services.db.recent_memos(80)
+              if m["event"] == "reconciliation_alert"]
+    assert alerts, "an unknown broker leg must raise the alert"
+    assert alerts[0]["missing_in_ledger"] == {"AVGO260904C00397500": 1}
+
+
+def test_no_reconciliation_alert_when_books_match(tmp_path):
+    services = make_services(tmp_path)  # empty ledger, empty fake broker
+    run(services)
+    assert not [m for m in services.db.recent_memos(80)
+                if m["event"] == "reconciliation_alert"]

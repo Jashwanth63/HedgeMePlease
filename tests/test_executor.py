@@ -206,3 +206,21 @@ def test_option_order_payload_multi_leg_keeps_signed_credit():
     p = option_order_payload(1, legs, -1.11, "SLA-x")
     assert p["order_class"] == "mleg" and len(p["legs"]) == 4
     assert p["limit_price"] == "-1.11"
+
+
+def test_list_payload_unwrap_uses_result_envelope():
+    """The server wraps list payloads under 'result'; the old fallbacks
+    silently returned [] and made the startup stray sweep a no-op."""
+    import asyncio
+
+    from alpaca.broker.mcp import AlpacaMCP
+
+    mcp = AlpacaMCP.__new__(AlpacaMCP)
+
+    async def fake_call(tool, args=None):
+        return {"result": [{"id": "o1", "symbol": "AVGO260904C00397500", "qty": "-1",
+                            "asset_class": "us_option"}]}
+
+    mcp.call = fake_call
+    assert len(asyncio.run(AlpacaMCP.open_orders(mcp))) == 1
+    assert len(asyncio.run(AlpacaMCP.positions(mcp))) == 1
