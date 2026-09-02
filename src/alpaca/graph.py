@@ -271,7 +271,13 @@ def build_graph(services: Services, checkpointer=None):
                 if not view.get(f"trade_{phase}", True):
                     memo("event_phase_declined", {"symbol": event.symbol, "phase": phase,
                                                   "note": view.get("note", "")})
-                    services.db.set_state(f"sleeveB:{event.symbol}:{phase}", "declined")
+                    if phase == "runup":
+                        services.db.set_state(f"sleeveB:{event.symbol}:{phase}", "declined")
+                    else:
+                        # a crush window is minutes long; one hesitant sample must
+                        # not end it. Drop the cached view so the next cycle asks
+                        # a fresh analyst — the window closing is the real latch.
+                        services.db.set_state(view_key, None)
                     continue
                 if phase == "runup":
                     proposal, diag = build_runup_strangle(event, contracts, spot, now)

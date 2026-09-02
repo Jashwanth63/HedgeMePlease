@@ -313,3 +313,50 @@ def test_crush_refuses_when_no_pairing_fits_delta_cap():
     assert proposal is None
     assert "delta-balanced" in diag["reject"]
     assert diag["rejected_pairings"].get("delta_cap", 0) > 0
+
+
+def test_crush_decline_skips_cycle_but_does_not_latch(tmp_path, monkeypatch):
+    """One hesitant analyst sample must not end a 25 minute crush window;
+    the next cycle asks fresh. Run-up declines still latch for the day."""
+    import alpaca.broker.executor as executor
+    from alpaca.config import ExecutorConfig
+
+    monkeypatch.setattr(graph_mod, "now_et", lambda: CRUSH_NOW)
+    monkeypatch.setattr(
+        executor, "EXEC",
+        ExecutorConfig(improve_step=0.02, max_improvements=1, wait_seconds=1, poll_seconds=0),
+    )
+
+    calls = {}
+
+    async def flaky_view(context, memo):
+        sym = context["symbol"]
+        calls[sym] = calls.get(sym, 0) + 1
+        if sym == "DELL" and calls[sym] == 1:
+            return {"trade_runup": False, "trade_crush": False, "note": "hesitant"}
+        return {"trade_runup": False, "trade_crush": True, "note": "go"}
+
+    monkeypatch.setattr(graph_mod.desk, "event_phase_view", flaky_view)
+
+    class FillingFakeBroker(FakeBroker):
+        async def place_option_order(self, qty, legs, limit_price, client_order_id):
+            order = {"id": f"ord-{len(self.placed_orders)}",
+                     "client_order_id": client_order_id, "status": "filled",
+                     "filled_qty": str(qty), "filled_avg_price": limit_price,
+                     "limit_price": limit_price, "legs": legs}
+            self.placed_orders.append(order)
+            return order
+
+    services = make_services(tmp_path, broker=FillingFakeBroker(), dry_run=False)
+    run(services)  # DELL crush declined this cycle
+    assert services.db.get_state("sleeveB:DELL:crush") is None, "decline must not latch crush"
+    assert services.db.get_state("sleeveB:DELL:view:2026-09-01") is None, "view must be dropped"
+    assert services.db.get_state("sleeveB:AVGO:runup") == "declined", "runup declines still latch"
+    assert not [p for p in services.ledger.open_positions() if p.underlying == "DELL"]
+
+    run(services)  # fresh analyst approves; the trade proceeds
+    assert calls["DELL"] == 2
+    dell = [p for p in services.ledger.open_positions()
+            if p.underlying == "DELL" and "crush" in p.structure]
+    assert len(dell) == 1, "second cycle must open the crush condor"
+    assert services.db.get_state("sleeveB:DELL:crush") == "opened"
