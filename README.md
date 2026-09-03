@@ -1,16 +1,29 @@
 # HedgeMePlease
 
-**An autonomous iron condor desk, run by AI agents, governed by arithmetic.**
+**An autonomous options desk, run by AI agents, governed by arithmetic.**
 
-Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window, harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — and lets a team of four LLM agents inform, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
+Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window and harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — across three sleeves: gated index condors, earnings IV-crush trades, and agent-timed insurance. Six LLM agents inform, tune, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
 
-![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-90%20passing-brightgreen)
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-102%20passing-brightgreen)
 
 ---
 
 ## The thesis in one sentence
 
-We do not predict direction: we sell defined-risk iron condors on SPY and QQQ only when the market is measurably overpaying for movement — implied volatility at least 1.15 times our own HAR-RV forecast of realized volatility — and we make the worst case a number we chose in advance.
+We do not predict direction: we sell defined-risk options structures only when the market is measurably overpaying for movement — implied volatility rich against our own HAR-RV forecast, or an earnings implied move that history says overstates the jump — and we make the worst case a number we chose in advance.
+
+## The week it ran (official results)
+
+Fresh $100,000 paper account, Mon Aug 31 09:30 ET → Thu Sep 3 16:00 ET. Balances from Alpaca's portfolio history; every trade reproducible from `state/alpaca.db`.
+
+| Day | Close | Day P&L | Worst intraday dip |
+|---|---|---|---|
+| Mon Aug 31 | 99,993.94 | −6.06 | −45.40 |
+| Tue Sep 1 | 100,017.46 | +23.52 | −192.00 |
+| Wed Sep 2 | 100,166.81 | +149.35 | −55.00 |
+| Thu Sep 3 | 100,200.69 | +33.88 | −3.00 |
+
+**+$200.69 net** · 7 trades, 6 wins, profit factor 3.3 · peak capital at risk **$1,916 = 1.92% of the account** (+10.6% on peak risk in 4 days) · worst dip 0.19% against a 5% mandate — no rung of the drawdown ladder ever woke. Per sleeve: A gated condors **+174** (4/4), B earnings crush **+118** (DELL +69, AVGO +49), C insurance **−88** (premium cap was 122; it carried the book through two earnings nights and a war scare).
 
 ## The pipeline
 
@@ -23,7 +36,11 @@ graph TD
         subgraph LG["LangGraph state machine · SQLite checkpointed"]
             RC[Risk manager<br/>drawdown ladder vs peak and day]
             FL[Flatten and halt<br/>kill switch]
-            MG[Manage positions<br/>TP 50% · cut 2.5x · Thu flatten]
+            MG[Manage positions<br/>TP 50% · cut 2.5x · time exits · Thu flatten]
+            SB[Sleeve B: earnings events<br/>run-up / crush phases at runtime]
+            EV{Event analyst 🤖<br/>phase go or no-go}
+            SC[Sleeve C: insurance puts<br/>agent-timed, code backstop]
+            HG{Hedge analyst 🤖<br/>buy-now reasoning}
             DE{entries<br/>allowed?}
             GA[Market evidence<br/>bars · chains · term IVs · equity]
             RG[Regime analyst 🤖<br/>day view, tunes clamped params]
@@ -43,7 +60,9 @@ graph TD
 
     T --> RC
     RC -- kill --> FL --> JR
-    RC -- ok --> MG --> DE
+    RC -- ok --> MG --> SB --> SC --> DE
+    SB -.-> EV
+    SC -.-> HG
     DE -- no --> JR
     DE -- yes --> GA --> RG --> GT
     GT -- fail --> JR
@@ -55,16 +74,20 @@ graph TD
     JR --> DB
     GA <--> MCP
     EX --> MCP
+    SB --> MCP
+    SC --> MCP
     MCP <--> ALP
     RG -.-> OR
     PR -.-> OR
     NV -.-> OR
+    EV -.-> OR
+    HG -.-> OR
     JR -.-> OR
 
     classDef agent fill:#e9e2f7,stroke:#7c5cc4,color:#3a2a66
     classDef authority fill:#fbe4dc,stroke:#c4643f,color:#6b2f16
     classDef infra fill:#eceae3,stroke:#8a887e,color:#3d3c37
-    class RG,PR,NV,JR agent
+    class RG,PR,NV,EV,HG,JR agent
     class RE,RC,FL authority
     class DB,MCP,ALP,OR,T infra
 ```
@@ -85,8 +108,10 @@ graph TD
 |---|---|---|
 | Regime analyst | Tunes edge ratio, delta target, size factor — **inside hard clamps** | Deterministic defaults |
 | Proposer | Picks one condor from a pre-validated menu | First (best credit/width) candidate |
-| News analyst | Vetoes an approved entry over concrete catalysts | No veto |
-| Journalist | Narrates every cycle into the audit trail | Structured log only |
+| News analyst | Vetoes an approved entry over concrete catalysts — and knows an event trade's scheduled event IS the thesis, so it vetoes those only on exogenous risks | No veto |
+| Event analyst | Approves or declines each earnings phase (run-up, crush) at runtime, reading headlines and the implied move | Trade the viable phase |
+| Hedge analyst | Times the insurance purchase, taught the economics of paying theta for convexity | No purchase — a code backstop buys before the biggest event night regardless |
+| Journalist | Narrates every cycle into the audit trail, outcome first, never claiming unfilled trades | Structured log only |
 
 Agents can **subtract risk or add context — never add risk**. No agent can loosen a cap, size past the clamps, or overrule the stress grid. No key configured? The desk degrades to a fully deterministic bot and keeps trading.
 
@@ -107,7 +132,7 @@ The stress grid revalues every leg under crossed spot and vol shocks with an in-
 
 ## Execution discipline
 
-Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-credit mid, concede two cents at 40 second intervals at most twice, never below the 12%-of-width credit floor, then confirmed-cancel and walk away. Stale intentions die; the next cycle re-decides from scratch. Partial fills are kept — every filled unit is a complete defined-risk condor. Pace is throttled by construction: at most one new position per cycle, re-entry on the same underlying spaced 45 minutes, a thin 10 minute global circuit breaker, a hard cap of six entries per day, and the sleeve budget caps the book at three to four condors.
+Atomic multi-leg limit orders only (leg risk cannot exist; single-leg hedge puts route as plain orders — Alpaca's mleg class requires 2-4 legs, learned live). Post at the net-credit mid, concede two cents at 40 second intervals at most four times, never below the credit floor, then confirmed-cancel and walk away. Stale intentions die; the next cycle re-decides from scratch. Partial fills are kept — every filled unit is a complete defined-risk structure. Pace is throttled by construction: one new position per cycle, per-underlying cooldowns, a global entry spacer, a hard daily entry cap, and the sleeve, cluster, and count limits (≤15 positions, ≤3 per underlying per sleeve) bound the book. A reconciliation pass compares broker legs against ledger legs every cycle — because a restart once raced a fill, and the only durable guard is noticing the books disagree.
 
 ## Quickstart
 
@@ -115,7 +140,7 @@ Atomic multi-leg limit orders only (leg risk cannot exist). Post at the net-cred
 git clone https://github.com/alpacahq/alpaca-mcp-server ../alpaca-mcp-server
 uv sync --dev
 cp .env.example .env    # Alpaca paper keys + optional OpenRouter key
-uv run pytest           # 90 tests, all offline, no keys needed
+uv run pytest           # 102 tests, all offline, no keys needed
 ```
 
 | Command | What it does |
