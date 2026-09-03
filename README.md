@@ -1,0 +1,181 @@
+# HedgeMePlease
+
+**An autonomous options desk, run by AI agents, governed by arithmetic.**
+
+Built for the Alpaca AI Trading Agents Hackathon. A LangGraph state machine wakes every five minutes of the contest window and harvests the one options edge with decades of peer-reviewed evidence behind it — the volatility risk premium — across three sleeves: gated index condors, earnings IV-crush trades, and agent-timed insurance. Six LLM agents inform, tune, choose, veto, and narrate while a deterministic risk engine holds the only set of keys. Every quote, bar, chain, and order flows through the **official Alpaca MCP server**. Every decision, taken or refused, is written down.
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB) ![LangGraph](https://img.shields.io/badge/Orchestration-LangGraph-purple) ![Broker](https://img.shields.io/badge/Broker-Alpaca%20MCP-yellow) ![LLM](https://img.shields.io/badge/Agents-DeepSeek%20via%20OpenRouter-orange) ![Tests](https://img.shields.io/badge/Tests-102%20passing-brightgreen)
+
+---
+
+## The thesis in one sentence
+
+We do not predict direction: we sell defined-risk options structures only when the market is measurably overpaying for movement — implied volatility rich against our own HAR-RV forecast, or an earnings implied move that history says overstates the jump — and we make the worst case a number we chose in advance.
+
+## The week it ran (official results)
+
+Fresh $100,000 paper account, Mon Aug 31 09:30 ET → Thu Sep 3 16:00 ET. Balances from Alpaca's portfolio history; every trade reproducible from `state/alpaca.db`.
+
+| Day | Close | Day P&L | Worst intraday dip |
+|---|---|---|---|
+| Mon Aug 31 | 99,993.94 | −6.06 | −45.40 |
+| Tue Sep 1 | 100,017.46 | +23.52 | −192.00 |
+| Wed Sep 2 | 100,166.81 | +149.35 | −55.00 |
+| Thu Sep 3 | 100,200.69 | +33.88 | −3.00 |
+
+**+$200.69 net** · 7 trades, 6 wins, profit factor 3.3 · peak capital at risk **$1,916 = 1.92% of the account** (+10.6% on peak risk in 4 days) · worst dip 0.19% against a 5% mandate — no rung of the drawdown ladder ever woke. Per sleeve: A gated condors **+174** (4/4), B earnings crush **+118** (DELL +69, AVGO +49), C insurance **−88** (premium cap was 122; it carried the book through two earnings nights and a war scare).
+
+## The pipeline
+
+One invocation of the graph is one five minute cycle. Purple nodes are LLM agents (fail-open, never authoritative). The risk engine holds the only unconditional veto.
+
+```mermaid
+graph TD
+    subgraph VM["Azure VM · daemon, restart on failure"]
+        T([APScheduler trigger<br/>every 5 min, market hours])
+        subgraph LG["LangGraph state machine · SQLite checkpointed"]
+            RC[Risk manager<br/>drawdown ladder vs peak and day]
+            FL[Flatten and halt<br/>kill switch]
+            MG[Manage positions<br/>TP 50% · cut 2.5x · time exits · Thu flatten]
+            SB[Sleeve B: earnings events<br/>run-up / crush phases at runtime]
+            EV{Event analyst 🤖<br/>phase go or no-go}
+            SC[Sleeve C: insurance puts<br/>agent-timed, code backstop]
+            HG{Hedge analyst 🤖<br/>buy-now reasoning}
+            DE{entries<br/>allowed?}
+            GA[Market evidence<br/>bars · chains · term IVs · equity]
+            RG[Regime analyst 🤖<br/>day view, tunes clamped params]
+            GT{four gates<br/>window · macro · contango · edge}
+            BD[Condor builder<br/>0.20Δ shorts · EM wings · menu]
+            PR[Proposer 🤖<br/>chooses from the menu]
+            NV{News analyst 🤖<br/>catalyst veto, fail open}
+            RE{Risk engine<br/>caps + stress grid}
+            EX[Executor<br/>atomic 4-leg limit ladder]
+            JR[Journalist 🤖<br/>narrates the cycle]
+        end
+        DB[(SQLite<br/>trades · forecasts · memos · checkpoints)]
+        MCP[Alpaca MCP server<br/>stdio subprocess]
+    end
+    ALP[Alpaca paper API]
+    OR[OpenRouter · DeepSeek]
+
+    T --> RC
+    RC -- kill --> FL --> JR
+    RC -- ok --> MG --> SB --> SC --> DE
+    SB -.-> EV
+    SC -.-> HG
+    DE -- no --> JR
+    DE -- yes --> GA --> RG --> GT
+    GT -- fail --> JR
+    GT -- pass --> BD --> PR --> NV
+    NV -- veto --> JR
+    NV -- clear --> RE
+    RE -- reject --> JR
+    RE -- approve --> EX --> JR
+    JR --> DB
+    GA <--> MCP
+    EX --> MCP
+    SB --> MCP
+    SC --> MCP
+    MCP <--> ALP
+    RG -.-> OR
+    PR -.-> OR
+    NV -.-> OR
+    EV -.-> OR
+    HG -.-> OR
+    JR -.-> OR
+
+    classDef agent fill:#e9e2f7,stroke:#7c5cc4,color:#3a2a66
+    classDef authority fill:#fbe4dc,stroke:#c4643f,color:#6b2f16
+    classDef infra fill:#eceae3,stroke:#8a887e,color:#3d3c37
+    class RG,PR,NV,EV,HG,JR agent
+    class RE,RC,FL authority
+    class DB,MCP,ALP,OR,T infra
+```
+
+## Why this strategy
+
+| Claim | Evidence |
+|---|---|
+| Implied vol systematically exceeds realized (~84% of days, ~4 vol pts) | Bakshi & Kapadia (RFS 2003); Carr & Wu (RFS 2009); CBOE put-write index studies (Bondarenko) |
+| Passive condor selling died post-2010; regime gating is required | CBOE CNDR index: +9.1% CAGR 1987–2010, negative since |
+| Term-structure inversion precedes vol disasters | Simon & Campasano (J. Derivatives 2014); contango holds ~80–85% of days |
+| HAR-RV is the standard, hard-to-beat realized vol forecaster | Corsi (2009); Federal Reserve FEDS study: ML shows no consistent edge over it |
+| Manage winners early, defined risk only, exit before expiry | Practitioner research on 50% profit-taking; OptionSellers/XIV as the cautionary tails |
+
+## The agent desk
+
+| Agent | Power | Failure mode |
+|---|---|---|
+| Regime analyst | Tunes edge ratio, delta target, size factor — **inside hard clamps** | Deterministic defaults |
+| Proposer | Picks one condor from a pre-validated menu | First (best credit/width) candidate |
+| News analyst | Vetoes an approved entry over concrete catalysts — and knows an event trade's scheduled event IS the thesis, so it vetoes those only on exogenous risks | No veto |
+| Event analyst | Approves or declines each earnings phase (run-up, crush) at runtime, reading headlines and the implied move | Trade the viable phase |
+| Hedge analyst | Times the insurance purchase, taught the economics of paying theta for convexity | No purchase — a code backstop buys before the biggest event night regardless |
+| Journalist | Narrates every cycle into the audit trail, outcome first, never claiming unfilled trades | Structured log only |
+
+Agents can **subtract risk or add context — never add risk**. No agent can loosen a cap, size past the clamps, or overrule the stress grid. No key configured? The desk degrades to a fully deterministic bot and keeps trading.
+
+## The risk engine (the part that is not allowed to be clever)
+
+| Limit | Value |
+|---|---|
+| Kill switch — cancel all, flatten all, halt (sticky) | −3.5% from peak equity |
+| Daily ladder | −1.0% no new trades · −1.5% reduce only |
+| De-risk sizing ladder | 50% of kill budget spent → half size · 75% → no entries |
+| Per position max loss | $500 target, $1,000 hard cap |
+| Whole book stress grid (spot ±5% × vol shocked up) | worst cell ≥ −$3,000 |
+| Concentration | ≤15 positions, ≤3 per underlying per sleeve, Sleeve A budget $2,200, correlation-cluster caps |
+| Naked options | banned — structurally impossible (atomic 4-leg orders only) |
+| Contest end | flat by Thu 15:30 ET; the mark is Thursday EOD |
+
+The stress grid revalues every leg under crossed spot and vol shocks with an in-house Black-Scholes engine before any entry. Both prices come from the same model, so model error cancels — only the difference is trusted.
+
+## Execution discipline
+
+Atomic multi-leg limit orders only (leg risk cannot exist; single-leg hedge puts route as plain orders — Alpaca's mleg class requires 2-4 legs, learned live). Post at the net-credit mid, concede two cents at 40 second intervals at most four times, never below the credit floor, then confirmed-cancel and walk away. Stale intentions die; the next cycle re-decides from scratch. Partial fills are kept — every filled unit is a complete defined-risk structure. Pace is throttled by construction: one new position per cycle, per-underlying cooldowns, a global entry spacer, a hard daily entry cap, and the sleeve, cluster, and count limits (≤15 positions, ≤3 per underlying per sleeve) bound the book. A reconciliation pass compares broker legs against ledger legs every cycle — because a restart once raced a fill, and the only durable guard is noticing the books disagree.
+
+## Quickstart
+
+```bash
+git clone https://github.com/alpacahq/alpaca-mcp-server ../alpaca-mcp-server
+uv sync --dev
+cp .env.example .env    # Alpaca paper keys + optional OpenRouter key
+uv run pytest           # 102 tests, all offline, no keys needed
+```
+
+| Command | What it does |
+|---|---|
+| `uv run alpaca status` | account, book, drawdown state |
+| `uv run alpaca rv SPY` | RV series, HAR forecast, walk-forward vs baselines |
+| `uv run alpaca preview SPY` | chain → candidates → risk verdict, no orders |
+| `uv run alpaca scan` | one full **dry-run** graph cycle |
+| `uv run alpaca once` | one live cycle (places orders) |
+| `uv run alpaca loop` | the daemon, until contest end |
+| `uv run alpaca flatten` / `panic` / `unhalt` | manual overrides |
+| `uv run alpaca memos` | tail the audit trail |
+| `uv run alpaca report` | equity path, forecast vs realized, every trade with its reasoning |
+
+## Tested like we mean it
+
+Every component has offline tests with zero network and zero keys: the pricing engine (put-call parity, intrinsic limits), the stress grid (tail losses bounded by wing width), the risk engine (every rung of the ladder), the vol pipeline (incomplete days excluded — annualizing a partial day would bias the edge gate), the HAR model (walk-forward against dumb baselines, demotion rules), the gates (contest calendar blackouts included), the condor builder (credit floors, delta bands, loss caps), the executor ladder (floor-respecting concessions, confirmed cancels, partial fills), and — the capstone — **the full LangGraph cycle running end to end against a fake broker**, from trigger to journaled dry-run execution, plus the kill-switch path proving a breach halts and flattens.
+
+## Every decision is written down
+
+`state/alpaca.db` is the exhibit: a `memos` table with every gate reading, candidate menu, chosen proposal and the proposer's stated reason, veto verdict, risk verdict, fill, and exit — plus every raw LLM call (role, input, response). Each filled trade stores its complete entry context (evidence, gates, regime view, agent reasoning) in the `trades` table next to its realized PnL, so one row answers "what did this condor make and why did we ever own it." Forecasts are stored beside next-day realized vol, the same join that drives the model's self-demotion rule. `state/graph_checkpoints.db` checkpoints every cycle's full LangGraph state, making any decision replayable. `uv run alpaca report` prints the digest.
+
+## Deployment
+
+Runs anywhere Python runs; the contest instance lives on a small Azure VM under systemd (restart on failure, start on boot), deployed by a local one-shot script that ships the working tree and keys over SSH — deliberately untracked, so nothing about the infrastructure or credentials touches the repo. One operational rule: never run the daemon in two places against the same account.
+
+## Design principles
+
+1. **Two brains, strict hierarchy.** Everything that decides money is deterministic code with hard numbers. Models inform; arithmetic decides.
+2. **Every failure has a chosen direction.** Data gates fail closed. LLM agents fail open. Execution fails passive. Each default answers: which mistake is cheaper?
+3. **The account never holds anything the ledger cannot explain.** Reconciliation runs every cycle; unknowns raise alerts, never guesses.
+4. **Not trading is a position.** At VIX ~14 the edge gate is tight by design. Quiet cycles are the system working.
+
+## Contest disclosure
+
+Per the hackathon FAQ, pre-window work is disclosed: strategy research, architecture design, and scaffolding were prepared before the scoring window; the official 100,000 paper account trades only within the window (Mon Aug 31 09:30 ET → equity marked EOD Thu Sep 3). Backtest-style validation here is limited to walk-forward forecaster evaluation; official P&L is the live paper account.
+
+Built with the official [Alpaca MCP server](https://github.com/alpacahq/alpaca-mcp-server), [LangGraph](https://github.com/langchain-ai/langgraph), and DeepSeek V3.2 via OpenRouter.

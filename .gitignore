@@ -1,1 +1,13 @@
 .env
+.env.*
+!.env.example
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+state/
+*.egg-info/
+.ruff_cache/
+deploy.local.*
+deploy*.ps1
+deploy*.sh
