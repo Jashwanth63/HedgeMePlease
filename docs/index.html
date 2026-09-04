@@ -1,0 +1,254 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HedgeMePlease</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;600&family=Source+Sans+3:wght@400;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #FAFAF7;
+    --ink: #1C2430;
+    --slate: #5C6672;
+    --hairline: #DFE0D8;
+    --panel: #F1F1EA;
+    --gain: #1E6E4E;
+    --loss: #A9452F;
+    --steel: #33586E;
+    --termbg: #1C2430;
+    --termtext: #D8DCCF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21; --ink: #E8E6DF; --slate: #9AA3AD; --hairline: #2A313B;
+      --panel: #1C232D; --gain: #5CBE8F; --loss: #D0805F; --steel: #7FA8C9;
+      --termbg: #10151C; --termtext: #C6CDBE;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21; --ink: #E8E6DF; --slate: #9AA3AD; --hairline: #2A313B;
+    --panel: #1C232D; --gain: #5CBE8F; --loss: #D0805F; --steel: #7FA8C9;
+    --termbg: #10151C; --termtext: #C6CDBE;
+  }
+  * { box-sizing: border-box; }
+  body {
+    background: var(--paper); color: var(--ink);
+    font-family: "Source Sans 3", "Segoe UI", system-ui, sans-serif;
+    font-size: 16px; line-height: 1.55; margin: 0;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 0 24px; }
+  .hero { padding: 64px 0 8px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", Consolas, monospace; font-size: 12px;
+    letter-spacing: .16em; text-transform: uppercase; color: var(--steel);
+  }
+  h1 {
+    font-family: Spectral, Georgia, serif; font-weight: 600;
+    font-size: clamp(34px, 6vw, 56px); line-height: 1.08;
+    margin: 10px 0 14px; max-width: 17ch; text-wrap: balance;
+  }
+  .hero p.sub { color: var(--slate); font-size: 18px; max-width: 58ch; margin: 0 0 26px; }
+  .hero p.sub strong { color: var(--ink); }
+  .stats { display: flex; flex-wrap: wrap; gap: 12px 36px; margin-bottom: 28px; }
+  .stat .n {
+    font-family: "IBM Plex Mono", Consolas, monospace; font-size: 26px; font-weight: 500;
+    display: block; letter-spacing: -.01em;
+  }
+  .stat .n.green { color: var(--gain); }
+  .stat .l { font-size: 11.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--slate); }
+  .ctas { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }
+  .btn {
+    display: inline-block; text-decoration: none; font-weight: 600; font-size: 15px;
+    padding: 11px 22px; border-radius: 3px; border: 1.5px solid var(--ink); color: var(--ink);
+  }
+  .btn.primary { background: var(--ink); color: var(--paper); }
+  .btn:hover, .btn:focus { border-color: var(--steel); color: var(--steel); }
+  .btn.primary:hover, .btn.primary:focus { background: var(--steel); border-color: var(--steel); color: var(--paper); }
+  .heroline { margin: 8px auto 0; }
+  .heroline svg { display: block; width: 100%; height: auto; }
+  .heroline text { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11px; fill: var(--slate); }
+  .heroline .pt { fill: var(--ink); font-size: 11.5px; }
+  section { padding: 46px 0 8px; }
+  h2 { font-family: Spectral, Georgia, serif; font-weight: 600; font-size: 26px; margin: 0 0 6px; }
+  .lede { color: var(--slate); max-width: 64ch; margin: 0 0 24px; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 0; border-top: 2px solid var(--ink); }
+  .col { padding: 18px 22px 22px 0; border-bottom: 1px solid var(--hairline); }
+  .col + .col { padding-left: 22px; border-left: 1px solid var(--hairline); }
+  .col h3 { font-size: 16px; margin: 0 0 6px; }
+  .col h3 .k { font-family: "IBM Plex Mono", Consolas, monospace; color: var(--steel); font-weight: 400; margin-right: 8px; }
+  .col p { font-size: 14.5px; color: var(--slate); margin: 0; }
+  .col .who { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 12px; color: var(--steel); display: block; margin-top: 10px; }
+  .sleeves { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  .sleeve { background: var(--panel); border: 1px solid var(--hairline); padding: 20px 22px; }
+  .sleeve .tag {
+    font-family: "IBM Plex Mono", Consolas, monospace; font-size: 11px; letter-spacing: .12em;
+    text-transform: uppercase; color: var(--steel);
+  }
+  .sleeve h3 { font-family: Spectral, Georgia, serif; font-size: 19px; margin: 6px 0 8px; }
+  .sleeve p { font-size: 14.5px; color: var(--slate); margin: 0 0 14px; min-height: 66px; }
+  .sleeve .result { font-family: "IBM Plex Mono", Consolas, monospace; font-size: 20px; font-weight: 500; }
+  .sleeve .result.green { color: var(--gain); }
+  .sleeve .result.red { color: var(--loss); }
+  .sleeve .result small { font-size: 12px; color: var(--slate); font-weight: 400; margin-left: 8px; }
+  .rungs {
+    display: flex; flex-wrap: wrap; gap: 8px 30px; margin-top: 20px; padding: 14px 18px;
+    border-left: 3px solid var(--steel); background: var(--panel);
+    font-family: "IBM Plex Mono", Consolas, monospace; font-size: 13px;
+  }
+  .rungs b { color: var(--gain); font-weight: 500; }
+  .term {
+    background: var(--termbg); color: var(--termtext); border-radius: 4px;
+    padding: 20px 24px; overflow-x: auto;
+    font-family: "IBM Plex Mono", Consolas, monospace; font-size: 12.5px; line-height: 1.75;
+  }
+  .term .t { color: #7A8577; }
+  .term .k { color: #8FB6D9; }
+  .term .g { color: #86C99B; }
+  .term .r { color: #D9917A; }
+  .term p { margin: 0 0 14px; white-space: pre-wrap; max-width: none; }
+  .term p:last-child { margin: 0; }
+  .termnote { font-size: 13px; color: var(--slate); margin-top: 10px; }
+  footer { margin-top: 56px; border-top: 1px solid var(--hairline); padding: 22px 0 48px; color: var(--slate); font-size: 13.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 10px 40px; justify-content: space-between; }
+  a { color: var(--steel); }
+</style>
+</head>
+<body>
+
+<div class="hero wrap">
+  <div class="eyebrow">Alpaca AI Trading Agents Hackathon &middot; Aug 31 &ndash; Sep 3, 2026</div>
+  <h1>An agentic options desk governed by arithmetic.</h1>
+  <p class="sub">HedgeMePlease trades the volatility risk premium autonomously: <strong>six LLM agents</strong> reason over
+  live evidence while a <strong>deterministic risk engine</strong> holds the only keys. Every order flows through the
+  official Alpaca MCP server. Every decision &mdash; taken or refused &mdash; is written down.</p>
+  <div class="stats">
+    <div class="stat"><span class="n green">+$200.69</span><span class="l">on $100K, 4 days</span></div>
+    <div class="stat"><span class="n">1.92%</span><span class="l">peak capital at risk</span></div>
+    <div class="stat"><span class="n green">+10.6%</span><span class="l">return on peak risk</span></div>
+    <div class="stat"><span class="n">3.3</span><span class="l">profit factor</span></div>
+  </div>
+  <div class="ctas">
+    <a class="btn primary" href="http://13.90.28.24:8080/?k=hedgeme26">Open the live desk</a>
+    <a class="btn" href="https://github.com/Jashwanth63/HedgeMePlease">Read the code</a>
+    <a class="btn" href="https://claude.ai/code/artifact/6787bec4-60fc-4670-94e4-549203bf544c">The full ledger</a>
+  </div>
+  <p class="sub" style="font-size:13.5px; margin-top:10px">The live desk is the agent&rsquo;s own status page, served
+  read-only from the contest VM: final equity, every position, and the complete audit trail.</p>
+</div>
+
+<div class="heroline wrap">
+  <svg viewBox="0 0 920 210" role="img" aria-label="Account equity, Monday through Thursday">
+    <line x1="60" y1="170" x2="860" y2="170" stroke="var(--hairline)" stroke-width="1"/>
+    <line x1="60" y1="139" x2="860" y2="139" stroke="var(--steel)" stroke-width="1" stroke-dasharray="5 4" opacity="0.6"/>
+    <line x1="60" y1="89" x2="860" y2="89" stroke="var(--hairline)" stroke-width="1" opacity="0.55"/>
+    <line x1="60" y1="39" x2="860" y2="39" stroke="var(--hairline)" stroke-width="1" opacity="0.55"/>
+    <text x="52" y="143" text-anchor="end">100,000</text>
+    <text x="52" y="93" text-anchor="end">100,100</text>
+    <text x="52" y="43" text-anchor="end">100,200</text>
+    <polyline points="120,143 350,131 580,56 810,39" fill="none" stroke="var(--gain)" stroke-width="2.5" stroke-linejoin="round"/>
+    <circle cx="120" cy="143" r="4" fill="var(--paper)" stroke="var(--gain)" stroke-width="2"/>
+    <circle cx="350" cy="131" r="4" fill="var(--paper)" stroke="var(--gain)" stroke-width="2"/>
+    <circle cx="580" cy="56" r="4" fill="var(--paper)" stroke="var(--gain)" stroke-width="2"/>
+    <circle cx="810" cy="39" r="5" fill="var(--gain)" stroke="var(--gain)" stroke-width="2"/>
+    <text x="120" y="163" text-anchor="middle" class="pt">99,993.94</text>
+    <text x="350" y="120" text-anchor="middle" class="pt">100,017.46</text>
+    <text x="580" y="45" text-anchor="middle" class="pt">100,166.81</text>
+    <text x="810" y="28" text-anchor="middle" class="pt">100,200.69</text>
+    <text x="120" y="192" text-anchor="middle">Mon</text>
+    <text x="350" y="192" text-anchor="middle">Tue</text>
+    <text x="580" y="192" text-anchor="middle">Wed</text>
+    <text x="810" y="192" text-anchor="middle">Thu</text>
+  </svg>
+  <p style="font-family:'IBM Plex Mono',Consolas,monospace; font-size:11.5px; color:var(--slate); margin:2px 0 0;">
+  Official daily closes from Alpaca, drawn to scale: the full vertical window is $250 on a $100,000 account.</p>
+</div>
+
+<section class="wrap">
+  <h2>One cycle, every five minutes</h2>
+  <p class="lede">A LangGraph state machine of fifteen nodes, checkpointed to SQLite, walks the same disciplined loop
+  all session long. Agents can tighten, choose, veto, or decline &mdash; they cannot loosen a single cap.</p>
+  <div class="cols">
+    <div class="col">
+      <h3><span class="k">01</span>Sense</h3>
+      <p>Bars, option chains, term-structure IVs, account state &mdash; all through the official Alpaca MCP server,
+      the only broker path in the codebase. A HAR-RV model forecasts realized volatility, walk-forward validated,
+      self-demoting on failure.</p>
+      <span class="who">alpaca-mcp &middot; HAR-RV &middot; stress grid</span>
+    </div>
+    <div class="col">
+      <h3><span class="k">02</span>Reason</h3>
+      <p>Six DeepSeek agents at the decision points: regime analyst, proposer, news veto, event analyst, hedge analyst,
+      journalist. Each fails open to a deterministic default; every input and response is logged.</p>
+      <span class="who">deepseek-v3.2 via openrouter</span>
+    </div>
+    <div class="col">
+      <h3><span class="k">03</span>Decide</h3>
+      <p>Hard gates, per-trade caps, sleeve budgets, cluster limits, a Black-Scholes stress grid, and a drawdown
+      ladder ending in a kill switch. Arithmetic makes every final call; execution is atomic limit ladders with
+      confirmed cancels.</p>
+      <span class="who">risk engine &middot; the only veto that counts</span>
+    </div>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Three sleeves, one risk engine</h2>
+  <p class="lede">Independent books with independent budgets, reconciled against the broker every cycle.</p>
+  <div class="sleeves">
+    <div class="sleeve">
+      <span class="tag">Sleeve A</span>
+      <h3>Gated index condors</h3>
+      <p>Iron condors on SPY, QQQ, GLD, TLT &mdash; sold only when four hard gates pass, including IV at 1.15&times;
+      our own realized-vol forecast. Profit taken automatically at 50%.</p>
+      <span class="result green">+$174 <small>4 trades, 4 wins</small></span>
+    </div>
+    <div class="sleeve">
+      <span class="tag">Sleeve B</span>
+      <h3>Earnings IV-crush</h3>
+      <p>In the final 25 minutes before the DELL and AVGO prints, an event analyst decided at runtime whether to sell
+      condors beyond the implied move. Covered next morning, unconditionally.</p>
+      <span class="result green">+$118 <small>DELL +69 &middot; AVGO +49</small></span>
+    </div>
+    <div class="sleeve">
+      <span class="tag">Sleeve C</span>
+      <h3>Insurance</h3>
+      <p>Far-OTM SPY puts, timed by a hedge analyst taught the economics of paying theta for convexity, with a code
+      backstop before the biggest event night. Retired itself once the book was flat.</p>
+      <span class="result red">&minus;$88 <small>premium cap was 122 &mdash; by design</small></span>
+    </div>
+  </div>
+  <div class="rungs">
+    <span>&minus;1.0% no new trades</span>
+    <span>&minus;1.5% reduce only</span>
+    <span>&minus;3.5% kill switch</span>
+    <span>&minus;5.0% mandate</span>
+    <span><b>worst dip all week: &minus;0.19%</b></span>
+  </div>
+</section>
+
+<section class="wrap">
+  <h2>Receipts, not claims</h2>
+  <p class="lede">Three real lines from the audit trail &mdash; the agents earning their keep, verbatim.</p>
+  <div class="term">
+    <p><span class="t">2026-09-01 14:21 ET</span>  <span class="k">gates</span>  SPY pass=false failed=[macro_clear, contango] <span class="r">edge_ratio_required=1.30</span>
+<span class="t">the regime analyst raised the entry bar to near its ceiling the day the US–Iran conflict escalated; no new trades entered that tape</span></p>
+    <p><span class="t">2026-09-01 11:31 ET</span>  <span class="k">hedge_view</span>  buy_now=false
+<span class="t">"the book has only 4 open positions with a modest max loss, and the next significant event (DELL earnings) is still 4.6 hours away, so immediate insurance purchase is not yet warranted"</span></p>
+    <p><span class="t">2026-09-01 15:33 ET</span>  <span class="k">event_phase_view</span>  DELL trade_crush=<span class="g">true</span>
+<span class="t">"crush phase is viable with 30 minutes until earnings, implied move of 11.2% is typical for tech earnings, and no headlines indicate postponement or unusual risk"</span>  →  <span class="g">filled 15:55:00, closed +$69</span></p>
+  </div>
+  <p class="termnote">The full trail &mdash; every gate reading, agent call, veto, fill, and exit &mdash; ships in the
+  repository, joined to each trade&rsquo;s P&amp;L.</p>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>Built on the official <a href="https://github.com/alpacahq/alpaca-mcp-server">Alpaca MCP server</a>,
+    <a href="https://github.com/langchain-ai/langgraph">LangGraph</a>, and DeepSeek V3.2 via OpenRouter.
+    102 offline tests.</span>
+    <span>Paper trading only &middot; not investment advice.</span>
+  </div>
+</footer>
+
+</body>
+</html>
